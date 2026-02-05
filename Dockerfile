@@ -30,11 +30,19 @@ WORKDIR /app/bridge
 RUN npm install && npm run build
 WORKDIR /app
 
-# Create config directory
-RUN mkdir -p /root/.nanobot
+# Create config and workspace directories
+RUN mkdir -p /root/.nanobot /app/workspace
+
+# Copy entrypoint script for restart signal support
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 # Gateway default port
 EXPOSE 18790
 
+# Default environment
+ENV NANOBOT_WORKSPACE=/app/workspace
+
+# Use restart-aware entrypoint for 'run' command, direct for others
 ENTRYPOINT ["nanobot"]
-CMD ["status"]
+CMD ["run"]

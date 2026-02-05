@@ -168,7 +168,9 @@ Skills with available="false" need dependencies installed first - you can try in
         # Fallback to hardcoded defaults if IDENTITY.md doesn't exist
         return self._get_default_identity(now, workspace_path)
 
-    def _build_identity_with_context(self, identity_content: str, now: str, workspace_path: str) -> str:
+    def _build_identity_with_context(
+        self, identity_content: str, now: str, workspace_path: str
+    ) -> str:
         """Build identity from IDENTITY.md content with dynamic context appended."""
         return f"""{identity_content}
 
@@ -280,6 +282,7 @@ When you install a new MCP server, document its tools in TOOLS.md."""
         current_message: str,
         skill_names: list[str] | None = None,
         media: list[str] | None = None,
+        channel_context: str = "",
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -289,6 +292,7 @@ When you install a new MCP server, document its tools in TOOLS.md."""
             current_message: The new user message.
             skill_names: Optional skills to include.
             media: Optional list of local file paths for images/media.
+            channel_context: Optional recent channel messages for context.
 
         Returns:
             List of messages including system prompt.
@@ -301,6 +305,14 @@ When you install a new MCP server, document its tools in TOOLS.md."""
 
         # History
         messages.extend(history)
+
+        # If channel context provided, prepend to user message
+        if channel_context:
+            current_message = (
+                f"[Recent channel messages for context]\n"
+                f"{channel_context}\n\n"
+                f"[Current message]\n{current_message}"
+            )
 
         # Current message (with optional image attachments)
         user_content = self._build_user_content(current_message, media)

@@ -220,11 +220,15 @@ class AgentLoop:
         if isinstance(mcp_install_tool, InstallMCPServerTool):
             mcp_install_tool.set_context(msg.channel, msg.chat_id)
 
+        # Extract channel context from metadata (e.g., Discord channel history)
+        channel_context = msg.metadata.get("channel_context", "") if msg.metadata else ""
+
         # Build initial messages (use get_history for LLM-formatted messages)
         messages = self.context.build_messages(
             history=session.get_history(),
             current_message=msg.content,
             media=msg.media if msg.media else None,
+            channel_context=channel_context,
         )
 
         # Agent loop

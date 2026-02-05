@@ -45,6 +45,7 @@ class DiscordConfig(BaseModel):
     default_channel_id: str = ""  # Channel for proactive messages (cron, notifications)
     trigger_word: str = "nano"  # Respond when this word appears in messages
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs
+    context_messages: int = Field(default=0, alias="contextMessages")  # Recent channel messages
 
 
 class ChannelsConfig(BaseModel):

@@ -136,14 +136,9 @@ class DiscordChannel(BaseChannel):
                 logger.error(f"Channel {channel_id} is not a text channel")
                 return
 
-            # Create and send embed
+            # Send as plain text (split if too long)
             content = msg.content
-            if len(content) <= self.EMBED_MAX_LENGTH:
-                embed = self._create_embed(content)
-                await channel.send(embed=embed)
-            else:
-                # Split long content into multiple embeds or fall back to plain text
-                await self._send_long_message(channel, content)
+            await self._send_message(channel, content)
 
         except discord.Forbidden:
             logger.error(f"Permission denied sending to channel {channel_id}")
@@ -181,6 +176,11 @@ class DiscordChannel(BaseChannel):
         if not self.is_allowed(sender_id):
             logger.debug(f"Message from {sender_id} not allowed")
             return
+
+        # Fetch channel history context if configured
+        channel_context = ""
+        if self.config.context_messages > 0:
+            channel_context = await self._fetch_channel_context(message)
 
         # Add processing reaction
         try:
@@ -240,6 +240,7 @@ class DiscordChannel(BaseChannel):
                 "channel_name": getattr(message.channel, "name", "unknown"),
                 "guild_id": message.guild.id if message.guild else None,
                 "guild_name": message.guild.name if message.guild else None,
+                "channel_context": channel_context,
             },
         )
 
@@ -281,6 +282,33 @@ class DiscordChannel(BaseChannel):
                     logger.warning(f"Failed to fetch referenced message: {e}")
 
         return False
+
+    async def _fetch_channel_context(self, message: "DiscordMessage") -> str:
+        """Fetch recent channel messages as context."""
+        try:
+            history_messages = []
+            async for msg in message.channel.history(
+                limit=self.config.context_messages, before=message
+            ):
+                # Skip bot messages (we have our own session history)
+                if msg.author.bot:
+                    continue
+
+                # Format: "username: message content"
+                author = msg.author.display_name or msg.author.name
+                content = msg.content[:500]  # Truncate very long messages
+                history_messages.append(f"{author}: {content}")
+
+            if not history_messages:
+                return ""
+
+            # Reverse to chronological order (oldest first)
+            history_messages.reverse()
+
+            return "\n".join(history_messages)
+        except Exception as e:
+            logger.warning(f"Failed to fetch channel history: {e}")
+            return ""
 
     def _clean_message_content(self, message: "DiscordMessage") -> str:
         """Remove bot mention and trigger word from message content."""

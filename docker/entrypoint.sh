@@ -18,8 +18,8 @@ echo "Workspace: $WORKSPACE"
 while true; do
     echo "$(date): Starting nanobot..."
 
-    # Run nanobot and capture exit code
-    python -m nanobot.cli run || exit_code=$?
+    # Run nanobot gateway and capture exit code
+    nanobot gateway || exit_code=$?
 
     # Check for restart signal
     if [ -f "$RESTART_SIGNAL" ]; then

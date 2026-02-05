@@ -134,7 +134,9 @@ class InstallMCPServerTool(Tool):
             logger.info(f"Added MCP server '{server_name}' to config")
 
             # Write restart signal with verification job
-            verify_time = (datetime.now(UTC) + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+            verify_time = (
+                (datetime.now(UTC) + timedelta(minutes=2)).isoformat().replace("+00:00", "Z")
+            )
 
             verify_job = {
                 "name": f"verify_mcp_{server_name}",

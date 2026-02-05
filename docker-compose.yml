@@ -1,0 +1,28 @@
+services:
+  nanobot:
+    build: .
+    container_name: nanobot
+    restart: unless-stopped
+    # Use the restart-aware entrypoint for MCP server installation support
+    entrypoint: ["/entrypoint.sh"]
+    volumes:
+      # Mount local config directly for easy editing
+      - ~/.nanobot:/root/.nanobot
+      # Persist workspace (memory, sessions, skills, TOOLS.md, etc.)
+      - nanobot-workspace:/app/workspace
+    environment:
+      # Set your API keys here or in .env file
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      # Workspace path inside container
+      - NANOBOT_WORKSPACE=/app/workspace
+    ports:
+      # Gateway port (optional, for HTTP API)
+      - "18790:18790"
+    # For WhatsApp bridge headless browser support
+    # Uncomment if using WhatsApp channel
+    # shm_size: '2gb'
+
+volumes:
+  nanobot-workspace:
