@@ -86,13 +86,30 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
 
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    BOOTSTRAP_FILES = [
+        "AGENTS.md",
+        "SOUL.md",
+        "USER.md",
+        "TOOLS.md",
+        "IDENTITY.md",
+    ]
 
-    def __init__(self, workspace: Path):
+    def __init__(
+        self,
+        workspace: Path,
+        memory_enabled: bool = False,
+        core_memory: Any = None,
+    ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
+        self.memory_enabled = memory_enabled
+        self.core_memory = core_memory
         self._ensure_tools_md()
+
+        # Bootstrap file caching
+        self._bootstrap_cache: str | None = None
+        self._bootstrap_mtimes: dict[str, float] = {}
 
     def _ensure_tools_md(self) -> None:
         """Create TOOLS.md with template if it doesn't exist."""
@@ -128,6 +145,16 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
+
+        # Core memory (always-in-context scratchpad)
+        if self.core_memory:
+            core_ctx = self.core_memory.get_context()
+            if core_ctx:
+                parts.append(core_ctx)
+
+        # Long-term memory instructions
+        if self.memory_enabled:
+            parts.append(self._get_memory_instructions())
 
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
@@ -264,17 +291,83 @@ MCP tools extend your capabilities by connecting to external servers. You can:
 
 When you install a new MCP server, document its tools in TOOLS.md."""
 
+    def _get_memory_instructions(self) -> str:
+        """Get instructions for using semantic memory."""
+        return """# Long-term Memory
+
+You have access to semantic memory from all past conversations.
+
+## Memory Tools
+
+- `memory_search` - Search past conversations and facts. Supports
+  time-filtered search (today, this_week, this_month, last_N_days) and
+  type-filtered search (fact, conversation).
+- `core_memory_read` - Read your persistent core memory scratchpad.
+- `core_memory_update` - Update a section of core memory with key user
+  info, preferences, or project context.
+- `memory_forget` - Remove a specific memory entry by ID.
+
+## When to Search
+
+BEFORE answering questions about:
+- Prior work or decisions made together
+- User preferences or habits
+- Dates, names, or specific facts discussed before
+- Commitments or tasks from earlier conversations
+
+Always run `memory_search` first to recall relevant context. This helps you:
+- Maintain continuity across conversations
+- Remember user preferences without being told again
+- Recall important decisions and their reasoning
+- Reference past work accurately
+
+## Auto-Recall
+
+Relevant memories are automatically recalled with time-weighted relevance
+and injected into conversation context. If you see
+[Relevant memories from past conversations], review them before responding.
+
+## Core Memory
+
+Core memory is a small persistent scratchpad always visible in your
+context. Use `core_memory_update` to store important user info,
+preferences, and active project context. This avoids repeated lookups."""
+
+    def _is_bootstrap_stale(self) -> bool:
+        """Check if any bootstrap files have been modified since last cache."""
+        for filename in self.BOOTSTRAP_FILES:
+            file_path = self.workspace / filename
+            if file_path.exists():
+                mtime = file_path.stat().st_mtime
+                cached_mtime = self._bootstrap_mtimes.get(filename)
+                if cached_mtime is None or mtime > cached_mtime:
+                    return True
+            elif filename in self._bootstrap_mtimes:
+                # File was deleted
+                return True
+        return False
+
     def _load_bootstrap_files(self) -> str:
-        """Load all bootstrap files from workspace."""
+        """Load all bootstrap files from workspace (with caching)."""
+        # Return cached content if not stale
+        if self._bootstrap_cache is not None and not self._is_bootstrap_stale():
+            return self._bootstrap_cache
+
         parts = []
+        new_mtimes: dict[str, float] = {}
 
         for filename in self.BOOTSTRAP_FILES:
             file_path = self.workspace / filename
             if file_path.exists():
                 content = file_path.read_text(encoding="utf-8")
                 parts.append(f"## {filename}\n\n{content}")
+                new_mtimes[filename] = file_path.stat().st_mtime
 
-        return "\n\n".join(parts) if parts else ""
+        # Update cache
+        self._bootstrap_cache = "\n\n".join(parts) if parts else ""
+        self._bootstrap_mtimes = new_mtimes
+
+        return self._bootstrap_cache
 
     def build_messages(
         self,

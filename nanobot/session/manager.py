@@ -31,17 +31,28 @@ class Session:
         self.messages.append(msg)
         self.updated_at = datetime.now()
 
-    def get_history(self, max_messages: int = 50) -> list[dict[str, Any]]:
+    def get_history(
+        self,
+        max_messages: int | None = 50,
+        max_tokens: int | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Get message history for LLM context.
 
         Args:
-            max_messages: Maximum messages to return.
+            max_messages: Maximum messages to return (fallback if no token limit).
+            max_tokens: Maximum tokens for history (takes precedence if set).
 
         Returns:
             List of messages in LLM format.
         """
-        # Get recent messages
+        if max_tokens is not None:
+            return self._get_history_by_tokens(max_tokens)
+
+        # Fallback to message count limit
+        if max_messages is None:
+            max_messages = 50
+
         recent = (
             self.messages[-max_messages:] if len(self.messages) > max_messages else self.messages
         )
@@ -49,9 +60,51 @@ class Session:
         # Convert to LLM format (just role and content)
         return [{"role": m["role"], "content": m["content"]} for m in recent]
 
+    def _get_history_by_tokens(self, max_tokens: int) -> list[dict[str, Any]]:
+        """
+        Get history working backwards from newest, keeping messages until budget exhausted.
+
+        Args:
+            max_tokens: Maximum token budget for history.
+
+        Returns:
+            List of messages in LLM format.
+        """
+        from nanobot.utils.tokens import count_message_tokens
+
+        result = []
+        total_tokens = 0
+
+        # Work backwards from newest
+        for msg in reversed(self.messages):
+            llm_msg = {"role": msg["role"], "content": msg["content"]}
+            msg_tokens = count_message_tokens(llm_msg)
+
+            if total_tokens + msg_tokens > max_tokens:
+                break
+
+            result.append(llm_msg)
+            total_tokens += msg_tokens
+
+        # Reverse to restore chronological order
+        result.reverse()
+        return result
+
     def clear(self) -> None:
         """Clear all messages in the session."""
         self.messages = []
+        self.updated_at = datetime.now()
+
+    def get_rolling_summary(self) -> str | None:
+        """Get the rolling summary from metadata."""
+        return self.metadata.get("rolling_summary")
+
+    def set_rolling_summary(self, summary: str | None) -> None:
+        """Store the rolling summary in metadata."""
+        if summary:
+            self.metadata["rolling_summary"] = summary
+        elif "rolling_summary" in self.metadata:
+            del self.metadata["rolling_summary"]
         self.updated_at = datetime.now()
 
 
