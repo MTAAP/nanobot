@@ -86,13 +86,25 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
 
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    BOOTSTRAP_FILES = [
+        "AGENTS.md",
+        "SOUL.md",
+        "USER.md",
+        "TOOLS.md",
+        "IDENTITY.md",
+    ]
 
-    def __init__(self, workspace: Path, memory_enabled: bool = False):
+    def __init__(
+        self,
+        workspace: Path,
+        memory_enabled: bool = False,
+        core_memory: Any = None,
+    ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
         self.memory_enabled = memory_enabled
+        self.core_memory = core_memory
         self._ensure_tools_md()
 
         # Bootstrap file caching
@@ -133,6 +145,12 @@ class ContextBuilder:
         memory = self.memory.get_memory_context()
         if memory:
             parts.append(f"# Memory\n\n{memory}")
+
+        # Core memory (always-in-context scratchpad)
+        if self.core_memory:
+            core_ctx = self.core_memory.get_context()
+            if core_ctx:
+                parts.append(core_ctx)
 
         # Long-term memory instructions
         if self.memory_enabled:
@@ -277,7 +295,19 @@ When you install a new MCP server, document its tools in TOOLS.md."""
         """Get instructions for using semantic memory."""
         return """# Long-term Memory
 
-You have access to semantic memory from all past conversations via the `memory_search` tool.
+You have access to semantic memory from all past conversations.
+
+## Memory Tools
+
+- `memory_search` - Search past conversations and facts. Supports
+  time-filtered search (today, this_week, this_month, last_N_days) and
+  type-filtered search (fact, conversation).
+- `core_memory_read` - Read your persistent core memory scratchpad.
+- `core_memory_update` - Update a section of core memory with key user
+  info, preferences, or project context.
+- `memory_forget` - Remove a specific memory entry by ID.
+
+## When to Search
 
 BEFORE answering questions about:
 - Prior work or decisions made together
@@ -291,8 +321,17 @@ Always run `memory_search` first to recall relevant context. This helps you:
 - Recall important decisions and their reasoning
 - Reference past work accurately
 
-Note: Relevant memories may be automatically injected into the conversation context.
-If you see [Relevant memories from past conversations], review them before responding."""
+## Auto-Recall
+
+Relevant memories are automatically recalled with time-weighted relevance
+and injected into conversation context. If you see
+[Relevant memories from past conversations], review them before responding.
+
+## Core Memory
+
+Core memory is a small persistent scratchpad always visible in your
+context. Use `core_memory_update` to store important user info,
+preferences, and active project context. This avoids repeated lookups."""
 
     def _is_bootstrap_stale(self) -> bool:
         """Check if any bootstrap files have been modified since last cache."""

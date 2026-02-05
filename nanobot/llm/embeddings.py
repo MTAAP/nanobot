@@ -1,5 +1,6 @@
 """Embedding service using LiteLLM."""
 
+import asyncio
 import os
 from typing import Any
 
@@ -62,27 +63,47 @@ class EmbeddingService:
         if self.is_openrouter and not model.startswith("openrouter/"):
             model = f"openrouter/{model}"
 
-        try:
-            kwargs: dict[str, Any] = {
-                "model": model,
-                "input": texts,
-            }
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "input": texts,
+        }
 
-            if self.api_base:
-                kwargs["api_base"] = self.api_base
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
 
-            response = await litellm.aembedding(**kwargs)
+        max_retries = 2
+        backoff_seconds = [1, 2]
+        last_error: Exception | None = None
 
-            # Extract embeddings from response
-            embeddings = []
-            for item in response.data:
-                embeddings.append(item["embedding"])
+        for attempt in range(max_retries + 1):
+            try:
+                response = await litellm.aembedding(**kwargs)
 
-            return embeddings
+                # Extract embeddings from response
+                embeddings = []
+                for item in response.data:
+                    embeddings.append(item["embedding"])
 
-        except Exception as e:
-            logger.error(f"Embedding failed: {e}")
-            raise
+                return embeddings
+
+            except Exception as e:
+                last_error = e
+                if attempt < max_retries:
+                    wait = backoff_seconds[attempt]
+                    logger.warning(
+                        f"Embedding attempt {attempt + 1} failed "
+                        f"(model={model}, input_count={len(texts)}), "
+                        f"retrying in {wait}s"
+                    )
+                    await asyncio.sleep(wait)
+
+        total_chars = sum(len(t) for t in texts)
+        logger.error(
+            f"Embedding failed after {max_retries + 1} attempts: "
+            f"model={model}, input_count={len(texts)}, "
+            f"total_chars={total_chars}, error={last_error}"
+        )
+        raise last_error  # type: ignore[misc]
 
     async def embed_single(self, text: str) -> list[float]:
         """

@@ -90,8 +90,14 @@ class MemoryConfig(BaseModel):
     extract_facts: bool = Field(default=True, alias="extractFacts")
     auto_recall: bool = Field(default=True, alias="autoRecall")
     search_top_k: int = Field(default=5, alias="searchTopK")
-    min_similarity: float = Field(default=0.3, alias="minSimilarity")
+    min_similarity: float = Field(default=0.5, alias="minSimilarity")
     db_path: str = Field(default="~/.nanobot/memory/vectors.db", alias="dbPath")
+    recency_weight: float = Field(default=0.005, alias="recencyWeight")
+    enable_core_memory: bool = Field(default=True, alias="enableCoreMemory")
+    enable_entities: bool = Field(default=True, alias="enableEntities")
+    enable_consolidation: bool = Field(default=True, alias="enableConsolidation")
+    enable_proactive: bool = Field(default=False, alias="enableProactive")
+    entities_db_path: str = Field(default="~/.nanobot/memory/entities.db", alias="entitiesDbPath")
 
 
 class AgentDefaults(BaseModel):

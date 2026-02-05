@@ -621,6 +621,370 @@ def cron_run(
 
 
 # ============================================================================
+# Memory Commands
+# ============================================================================
+
+memory_app = typer.Typer(help="Manage memory")
+app.add_typer(memory_app, name="memory")
+
+
+def _get_memory_components() -> (
+    tuple["VectorStore", "EmbeddingService"]  # noqa: F821
+):
+    """Load config and create vector store + embedding service."""
+    from nanobot.config.loader import load_config
+    from nanobot.llm.embeddings import EmbeddingService
+    from nanobot.memory.vectors import VectorStore
+
+    config = load_config()
+    mem = config.agents.defaults.memory
+
+    if not mem.enabled:
+        console.print("[red]Memory is disabled in config.[/red]")
+        raise typer.Exit(1)
+
+    api_key = config.get_api_key()
+    embedding_service = EmbeddingService(
+        model=mem.embedding_model,
+        api_key=api_key,
+    )
+    vector_store = VectorStore(
+        db_path=mem.db_path,
+        embedding_service=embedding_service,
+    )
+    return vector_store, embedding_service
+
+
+@memory_app.command("search")
+def memory_search(
+    query: str = typer.Argument(..., help="Search query"),
+    limit: int = typer.Option(5, "--limit", "-n", help="Max results"),
+):
+    """Search memory for matching entries."""
+    vector_store, _ = _get_memory_components()
+
+    async def _search():
+        return await vector_store.search(query=query, top_k=limit)
+
+    results = asyncio.run(_search())
+
+    if not results:
+        console.print(f"No memories matching: {query}")
+        return
+
+    table = Table(title=f"Memory Search: {query}")
+    table.add_column("Score", style="cyan", width=6)
+    table.add_column("Type", width=12)
+    table.add_column("Date", width=12)
+    table.add_column("Content")
+
+    for r in results:
+        score = f"{r.get('similarity', 0):.2f}"
+        meta = r.get("metadata", {})
+        entry_type = meta.get("type", "?")
+        date = r.get("created_at", "")[:10]
+        text = r.get("text", "")[:120]
+        table.add_row(score, entry_type, date, text)
+
+    console.print(table)
+
+
+@memory_app.command("list")
+def memory_list(
+    type_filter: str = typer.Option(
+        None,
+        "--type",
+        "-t",
+        help="Filter by type (fact/conversation)",
+    ),
+    limit: int = typer.Option(20, "--limit", "-n", help="Max entries"),
+    after: str = typer.Option(
+        None,
+        "--after",
+        help="Only entries after date (YYYY-MM-DD)",
+    ),
+):
+    """List recent memory entries."""
+    import json
+    import sqlite3
+
+    vector_store, _ = _get_memory_components()
+
+    with sqlite3.connect(vector_store.db_path) as conn:
+        sql = "SELECT id, text, metadata, created_at FROM vectors ORDER BY created_at DESC"
+        rows = conn.execute(sql).fetchall()
+
+    entries = []
+    for row in rows:
+        entry_id, text, meta_json, created_at = row
+        meta = json.loads(meta_json) if meta_json else {}
+        entry_type = meta.get("type", "unknown")
+
+        if type_filter and entry_type != type_filter:
+            continue
+        if after and created_at < after:
+            continue
+
+        entries.append((entry_id, entry_type, created_at, text))
+        if len(entries) >= limit:
+            break
+
+    if not entries:
+        console.print("No matching entries found.")
+        return
+
+    table = Table(title="Memory Entries")
+    table.add_column("ID", style="cyan", width=6)
+    table.add_column("Type", width=12)
+    table.add_column("Date", width=12)
+    table.add_column("Content")
+
+    for entry_id, entry_type, created_at, text in entries:
+        date = created_at[:10] if created_at else ""
+        table.add_row(
+            str(entry_id),
+            entry_type,
+            date,
+            text[:100],
+        )
+
+    console.print(table)
+
+
+@memory_app.command("stats")
+def memory_stats():
+    """Show memory system statistics."""
+    import json
+    import sqlite3
+    from pathlib import Path
+
+    vector_store, _ = _get_memory_components()
+    db_path = Path(vector_store.db_path)
+
+    total = vector_store.count()
+    db_size = db_path.stat().st_size if db_path.exists() else 0
+
+    # Count by type
+    facts = 0
+    conversations = 0
+    oldest = None
+    newest = None
+
+    with sqlite3.connect(db_path) as conn:
+        rows = conn.execute("SELECT metadata, created_at FROM vectors").fetchall()
+
+    for meta_json, created_at in rows:
+        meta = json.loads(meta_json) if meta_json else {}
+        t = meta.get("type", "")
+        if t == "fact":
+            facts += 1
+        elif t == "conversation":
+            conversations += 1
+
+        if created_at:
+            if oldest is None or created_at < oldest:
+                oldest = created_at
+            if newest is None or created_at > newest:
+                newest = created_at
+
+    console.print(f"Total entries: [cyan]{total}[/cyan]")
+    console.print(f"  Facts: {facts}")
+    console.print(f"  Conversations: {conversations}")
+    console.print(f"  Other: {total - facts - conversations}")
+    if oldest:
+        console.print(f"Oldest: {oldest[:10]}")
+    if newest:
+        console.print(f"Newest: {newest[:10]}")
+
+    if db_size > 1024 * 1024:
+        size_str = f"{db_size / (1024 * 1024):.1f} MB"
+    elif db_size > 1024:
+        size_str = f"{db_size / 1024:.1f} KB"
+    else:
+        size_str = f"{db_size} B"
+    console.print(f"DB size: {size_str}")
+
+    # Entity count (if available)
+    from nanobot.config.loader import load_config
+
+    config = load_config()
+    entities_path = Path(config.agents.defaults.memory.entities_db_path).expanduser()
+    if entities_path.exists():
+        try:
+            with sqlite3.connect(entities_path) as conn:
+                entity_count = conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+            console.print(f"Entities: {entity_count}")
+        except Exception:
+            pass
+
+
+@memory_app.command("delete")
+def memory_delete(
+    entry_id: int = typer.Argument(..., help="Entry ID to delete"),
+):
+    """Delete a specific memory entry by ID."""
+    import sqlite3
+
+    vector_store, _ = _get_memory_components()
+
+    # Look up entry first
+    with sqlite3.connect(vector_store.db_path) as conn:
+        row = conn.execute("SELECT text FROM vectors WHERE id = ?", (entry_id,)).fetchone()
+
+    if not row:
+        console.print(f"[red]Entry {entry_id} not found.[/red]")
+        raise typer.Exit(1)
+
+    console.print(f"Content: {row[0][:200]}")
+    if not typer.confirm("Delete this entry?"):
+        raise typer.Exit()
+
+    with sqlite3.connect(vector_store.db_path) as conn:
+        conn.execute("DELETE FROM vectors WHERE id = ?", (entry_id,))
+        conn.commit()
+
+    console.print(f"[green]Deleted entry {entry_id}.[/green]")
+
+
+@memory_app.command("prune")
+def memory_prune(
+    older_than: int = typer.Option(
+        180,
+        "--days",
+        help="Remove unaccessed memories older than N days",
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--execute",
+        help="Preview only (default: dry run)",
+    ),
+):
+    """Remove old, never-accessed memories."""
+    from nanobot.config.loader import load_config
+    from nanobot.memory.consolidation import MemoryConsolidator
+    from nanobot.providers.litellm_provider import LiteLLMProvider
+
+    config = load_config()
+    vector_store, _ = _get_memory_components()
+
+    api_key = config.get_api_key()
+    api_base = config.get_api_base()
+    provider = LiteLLMProvider(
+        api_key=api_key,
+        api_base=api_base,
+        default_model=config.agents.defaults.model,
+    )
+
+    consolidator = MemoryConsolidator(
+        vector_store=vector_store,
+        provider=provider,
+    )
+
+    async def _prune():
+        return await consolidator.prune_old(
+            max_age_days=older_than,
+            dry_run=dry_run,
+        )
+
+    stats = asyncio.run(_prune())
+    pruned = stats.get("pruned_count", 0)
+
+    if dry_run:
+        console.print(f"Would prune {pruned} memories older than {older_than} days")
+    else:
+        console.print(f"[green]Pruned {pruned} memories.[/green]")
+
+
+@memory_app.command("consolidate")
+def memory_consolidate(
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--execute",
+        help="Preview only (default: dry run)",
+    ),
+):
+    """Consolidate similar memories."""
+    from nanobot.config.loader import load_config
+    from nanobot.memory.consolidation import MemoryConsolidator
+    from nanobot.providers.litellm_provider import LiteLLMProvider
+
+    config = load_config()
+    vector_store, _ = _get_memory_components()
+
+    api_key = config.get_api_key()
+    api_base = config.get_api_base()
+    provider = LiteLLMProvider(
+        api_key=api_key,
+        api_base=api_base,
+        default_model=config.agents.defaults.model,
+    )
+
+    consolidator = MemoryConsolidator(
+        vector_store=vector_store,
+        provider=provider,
+    )
+
+    async def _consolidate():
+        return await consolidator.consolidate(dry_run=dry_run)
+
+    stats = asyncio.run(_consolidate())
+
+    clusters = stats.get("clusters_found", 0)
+    merged = stats.get("entries_merged", 0)
+    created = stats.get("entries_created", 0)
+
+    if dry_run:
+        console.print(
+            f"Would merge {merged} entries in {clusters} clusters "
+            f"into {created} consolidated entries"
+        )
+    else:
+        console.print(
+            f"[green]Merged {merged} entries into {created} consolidated entries.[/green]"
+        )
+
+
+@memory_app.command("export")
+def memory_export(
+    output: str = typer.Option(
+        "memories.json",
+        "--output",
+        "-o",
+        help="Output file path",
+    ),
+):
+    """Export all memories to JSON."""
+    import json
+    import sqlite3
+
+    vector_store, _ = _get_memory_components()
+
+    entries = []
+    with sqlite3.connect(vector_store.db_path) as conn:
+        rows = conn.execute(
+            "SELECT id, text, metadata, created_at FROM vectors ORDER BY created_at"
+        ).fetchall()
+
+    for row in rows:
+        entry_id, text, meta_json, created_at = row
+        meta = json.loads(meta_json) if meta_json else {}
+        entries.append(
+            {
+                "id": entry_id,
+                "text": text,
+                "metadata": meta,
+                "created_at": created_at,
+            }
+        )
+
+    Path(output).write_text(
+        json.dumps(entries, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    console.print(f"[green]Exported {len(entries)} entries to {output}[/green]")
+
+
+# ============================================================================
 # Status Commands
 # ============================================================================
 

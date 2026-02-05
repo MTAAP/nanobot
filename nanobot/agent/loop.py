@@ -35,6 +35,25 @@ if TYPE_CHECKING:
     from nanobot.session.manager import Session
 
 
+def _truncate_at_sentence(text: str, max_chars: int = 300) -> str:
+    """Truncate text at the nearest sentence boundary within max_chars.
+
+    Looks for sentence-ending punctuation (.!?) followed by a space or end
+    of string. If no sentence boundary is found, falls back to a hard cut.
+    """
+    if len(text) <= max_chars:
+        return text
+
+    # Search for the last sentence boundary within max_chars
+    truncated = text[:max_chars]
+    for i in range(len(truncated) - 1, -1, -1):
+        if truncated[i] in ".!?" and (i + 1 >= len(truncated) or truncated[i + 1] == " "):
+            return truncated[: i + 1]
+
+    # No sentence boundary found, hard truncate with ellipsis
+    return truncated[:max_chars] + "..."
+
+
 class AgentLoop:
     """
     The agent loop is the core processing engine.
@@ -89,8 +108,17 @@ class AgentLoop:
 
         # Vector store for semantic memory (initialized in run())
         self.vector_store: "VectorStore | None" = None
+        # Core memory (initialized in _init_memory())
+        self.core_memory = None
+        # Entity store (initialized in _init_memory())
+        self.entity_store = None
+        # Proactive memory (initialized in _init_memory())
+        self.proactive_memory = None
 
-        self.context = ContextBuilder(workspace, memory_enabled=self.memory_config.enabled)
+        self.context = ContextBuilder(
+            workspace,
+            memory_enabled=self.memory_config.enabled,
+        )
         self.sessions = SessionManager(workspace)
         self.tools = ToolRegistry()
         self.subagents = SubagentManager(
@@ -543,22 +571,35 @@ class AgentLoop:
             return None
 
         try:
+            memory_context: list[str] = []
+
             results = await self.vector_store.search(
                 query=user_message,
                 top_k=self.memory_config.search_top_k,
                 min_similarity=self.memory_config.min_similarity,
+                recency_weight=self.memory_config.recency_weight,
+                type_weights={"fact": 1.2, "conversation": 1.0},
             )
 
-            if not results:
-                return None
+            if results:
+                memory_context.append("[Relevant memories from past conversations]")
+                for r in results:
+                    text = r.get("text", "")
+                    text = _truncate_at_sentence(text, 300)
+                    memory_context.append(f"- {text}")
 
-            # Format results as context
-            memory_context = ["[Relevant memories from past conversations]"]
-            for r in results:
-                text = r.get("text", "")[:300]  # Limit length
-                memory_context.append(f"- {text}")
+            # Proactive reminders
+            if self.proactive_memory:
+                try:
+                    reminders = await self.proactive_memory.get_reminders()
+                    if reminders:
+                        memory_context.append("\n[Upcoming reminders]")
+                        for r in reminders:
+                            memory_context.append(f"- {r}")
+                except Exception as e:
+                    logger.warning(f"Proactive reminders failed: {e}")
 
-            return "\n".join(memory_context)
+            return "\n".join(memory_context) if memory_context else None
 
         except Exception as e:
             logger.warning(f"Auto-recall failed: {e}")
@@ -588,16 +629,48 @@ class AgentLoop:
             # Create conversation turn text
             turn_text = f"User: {user_message}\nAssistant: {assistant_message}"
 
+            # Sanitize before indexing
+            from nanobot.memory.filters import sanitize_for_memory
+
+            sanitized = sanitize_for_memory(turn_text)
+            if sanitized is None:
+                logger.debug("Conversation turn filtered by sanitization")
+                return
+
             metadata = {
                 "session_key": session_key,
                 "type": "conversation",
             }
 
-            await self.vector_store.add(turn_text, metadata)
+            await self.vector_store.add(sanitized, metadata)
 
             # Extract and index facts if enabled
             if self.memory_config.extract_facts:
-                await self._extract_and_index_facts(session_key, user_message, assistant_message)
+                await self._extract_and_index_facts(
+                    session_key,
+                    user_message,
+                    assistant_message,
+                )
+
+            # Extract entities if enabled
+            if self.memory_config.enable_entities and self.entity_store:
+                await self._extract_and_index_entities(
+                    user_message,
+                    assistant_message,
+                )
+
+            # Record interaction pattern for proactive learning
+            if self.proactive_memory:
+                try:
+                    from datetime import datetime
+
+                    self.proactive_memory.record_interaction_pattern(
+                        session_key=session_key,
+                        topic=user_message[:100],
+                        timestamp=datetime.now().isoformat(),
+                    )
+                except Exception as e:
+                    logger.debug(f"Pattern recording failed: {e}")
 
         except Exception as e:
             logger.warning(f"Failed to index conversation: {e}")
@@ -637,6 +710,72 @@ class AgentLoop:
         except Exception as e:
             logger.warning(f"Fact extraction failed: {e}")
 
+    async def _extract_and_index_entities(
+        self,
+        user_message: str,
+        assistant_message: str,
+    ) -> None:
+        """Extract entities and relations from a conversation turn."""
+        if not self.entity_store:
+            return
+
+        try:
+            extraction_model = (
+                self.memory_config.extraction_model or self.compaction_config.model or self.model
+            )
+
+            prompt = (
+                "Extract named entities and their relationships "
+                "from this conversation.\n\n"
+                f"User: {user_message}\nAssistant: {assistant_message}\n\n"
+                "Output as JSON array of objects, each with:\n"
+                '- "name": entity name\n'
+                '- "type": one of person/project/organization/'
+                "technology/location/other\n"
+                '- "relations": array of '
+                '{"relation": "verb", "target": "other entity name"}'
+                " (optional)\n\n"
+                "Only include clearly identified entities. "
+                "If none, output [].\nJSON:"
+            )
+
+            response = await self.provider.chat(
+                messages=[{"role": "user", "content": prompt}],
+                model=extraction_model,
+                max_tokens=512,
+                temperature=0.2,
+            )
+
+            content = (response.content or "").strip()
+
+            # Handle markdown code blocks
+            if content.startswith("```"):
+                content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+
+            entities = json.loads(content)
+            if not isinstance(entities, list):
+                return
+
+            for entity in entities:
+                name = entity.get("name", "").strip()
+                etype = entity.get("type", "other").strip()
+                if not name:
+                    continue
+
+                self.entity_store.upsert_entity(name, etype)
+
+                for rel in entity.get("relations", []):
+                    relation = rel.get("relation", "").strip()
+                    target = rel.get("target", "").strip()
+                    if relation and target:
+                        self.entity_store.add_relation(name, relation, target)
+
+            if entities:
+                logger.debug(f"Extracted {len(entities)} entities from conversation")
+
+        except (json.JSONDecodeError, Exception) as e:
+            logger.debug(f"Entity extraction failed: {e}")
+
     def _init_memory(self) -> None:
         """Initialize semantic memory system."""
         if not self.memory_config.enabled:
@@ -661,6 +800,60 @@ class AgentLoop:
 
             # Register memory search tool
             self.tools.register(MemorySearchTool(self.vector_store))
+
+            # Initialize core memory if enabled
+            if self.memory_config.enable_core_memory:
+                try:
+                    from nanobot.agent.tools.core_memory import (
+                        CoreMemoryReadTool,
+                        CoreMemoryUpdateTool,
+                    )
+                    from nanobot.memory.core import CoreMemory
+
+                    self.core_memory = CoreMemory(self.workspace)
+                    self.tools.register(CoreMemoryReadTool(self.core_memory))
+                    self.tools.register(CoreMemoryUpdateTool(self.core_memory))
+                    # Pass core memory to context builder
+                    self.context.core_memory = self.core_memory
+                    logger.debug("Core memory initialized")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize core memory: {e}")
+
+            # Initialize entity store if enabled
+            if self.memory_config.enable_entities:
+                try:
+                    from nanobot.memory.entities import EntityStore
+
+                    self.entity_store = EntityStore(
+                        self.memory_config.entities_db_path,
+                    )
+                    logger.debug("Entity store initialized")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize entity store: {e}")
+
+            # Initialize proactive memory if enabled
+            if self.memory_config.enable_proactive:
+                try:
+                    from nanobot.memory.proactive import ProactiveMemory
+
+                    self.proactive_memory = ProactiveMemory(
+                        vector_store=self.vector_store,
+                        entity_store=self.entity_store,
+                        data_dir=self.workspace / "memory",
+                    )
+                    logger.debug("Proactive memory initialized")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize proactive memory: {e}")
+
+            # Register memory forget tool
+            try:
+                from nanobot.agent.tools.memory_forget import (
+                    MemoryForgetTool,
+                )
+
+                self.tools.register(MemoryForgetTool(self.vector_store))
+            except Exception as e:
+                logger.warning(f"Failed to register memory forget tool: {e}")
 
             logger.info(
                 f"Memory initialized: {self.vector_store.count()} entries, "
