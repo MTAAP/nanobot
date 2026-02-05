@@ -68,32 +68,45 @@ class VectorStore:
             row = cursor.fetchone()
 
             if row is None:
-                # Fresh database: create tables at current version
-                conn.execute("""
-                    CREATE TABLE IF NOT EXISTS vectors (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        content_hash TEXT UNIQUE NOT NULL,
-                        text TEXT NOT NULL,
-                        embedding BLOB NOT NULL,
-                        metadata TEXT,
-                        created_at TEXT NOT NULL,
-                        access_count INTEGER DEFAULT 0,
-                        last_accessed_at TEXT
+                # Check if vectors table already exists (pre-versioning DB)
+                existing = conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name='vectors'"
+                ).fetchone()
+
+                if existing:
+                    # Existing DB without version tracking: migrate from v0
+                    conn.execute(
+                        "INSERT INTO schema_version (version) VALUES (0)",
                     )
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_content_hash
-                    ON vectors(content_hash)
-                """)
-                conn.execute("""
-                    CREATE INDEX IF NOT EXISTS idx_created_at
-                    ON vectors(created_at)
-                """)
-                conn.execute(
-                    "INSERT INTO schema_version (version) VALUES (?)",
-                    (CURRENT_SCHEMA_VERSION,),
-                )
-                conn.commit()
+                    conn.commit()
+                    self._run_migrations(conn, 0)
+                else:
+                    # Truly fresh database: create at current version
+                    conn.execute("""
+                        CREATE TABLE vectors (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            content_hash TEXT UNIQUE NOT NULL,
+                            text TEXT NOT NULL,
+                            embedding BLOB NOT NULL,
+                            metadata TEXT,
+                            created_at TEXT NOT NULL,
+                            access_count INTEGER DEFAULT 0,
+                            last_accessed_at TEXT
+                        )
+                    """)
+                    conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_content_hash
+                        ON vectors(content_hash)
+                    """)
+                    conn.execute("""
+                        CREATE INDEX IF NOT EXISTS idx_created_at
+                        ON vectors(created_at)
+                    """)
+                    conn.execute(
+                        "INSERT INTO schema_version (version) VALUES (?)",
+                        (CURRENT_SCHEMA_VERSION,),
+                    )
+                    conn.commit()
             else:
                 db_version = row[0]
                 if db_version < CURRENT_SCHEMA_VERSION:
