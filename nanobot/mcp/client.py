@@ -51,6 +51,7 @@ class MCPClient:
         self._request_id = 0
         self._pending: dict[int | str, asyncio.Future[JsonRpcResponse]] = {}
         self._read_task: asyncio.Task[None] | None = None
+        self._stderr_task: asyncio.Task[None] | None = None
         self._server_info: MCPServerInfo | None = None
         self._tools: list[MCPToolInfo] = []
         self._started = False
@@ -107,10 +108,12 @@ class MCPClient:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 env=process_env,
+                limit=10_000_000,  # 10MB buffer limit for large MCP responses
             )
 
-            # Start reading responses
+            # Start reading responses and stderr
             self._read_task = asyncio.create_task(self._read_loop())
+            self._stderr_task = asyncio.create_task(self._read_stderr())
 
             # Initialize the connection
             await self._initialize()
@@ -144,6 +147,14 @@ class MCPClient:
             except asyncio.CancelledError:
                 pass
             self._read_task = None
+
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except asyncio.CancelledError:
+                pass
+            self._stderr_task = None
 
         if self._process:
             try:
@@ -283,14 +294,18 @@ class MCPClient:
     async def _read_loop(self) -> None:
         """Read responses from the server."""
         if not self._process or not self._process.stdout:
+            logger.debug(f"MCP {self.name}: No stdout available")
             return
 
+        logger.debug(f"MCP {self.name}: Read loop started")
         try:
             while True:
                 line = await self._process.stdout.readline()
                 if not line:
+                    logger.debug(f"MCP {self.name}: EOF on stdout")
                     break
 
+                logger.debug(f"MCP {self.name}: Received line ({len(line)} bytes)")
                 try:
                     data = json.loads(line.decode("utf-8"))
                     response = JsonRpcResponse.from_dict(data)
@@ -300,6 +315,7 @@ class MCPClient:
                         future = self._pending[response.id]
                         if not future.done():
                             future.set_result(response)
+                            logger.debug(f"MCP {self.name}: Resolved request {response.id}")
 
                 except json.JSONDecodeError:
                     logger.warning(f"Invalid JSON from MCP server {self.name}: {line}")
@@ -307,6 +323,22 @@ class MCPClient:
                     logger.warning(f"Error processing message from {self.name}: {e}")
 
         except asyncio.CancelledError:
-            pass
+            logger.debug(f"MCP {self.name}: Read loop cancelled")
         except Exception as e:
             logger.error(f"Read loop error for {self.name}: {e}")
+
+    async def _read_stderr(self) -> None:
+        """Read stderr from the server for logging."""
+        if not self._process or not self._process.stderr:
+            return
+
+        try:
+            while True:
+                line = await self._process.stderr.readline()
+                if not line:
+                    break
+                logger.debug(f"MCP {self.name} stderr: {line.decode('utf-8').rstrip()}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning(f"Stderr read error for {self.name}: {e}")

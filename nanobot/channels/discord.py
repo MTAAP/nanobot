@@ -1,5 +1,6 @@
 """Discord channel implementation using discord.py."""
 
+import asyncio
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +45,8 @@ class DiscordChannel(BaseChannel):
         self._guild: discord.Guild | None = None
         # Track messages being processed for reaction management
         self._processing_messages: dict[int, tuple[int, "DiscordMessage"]] = {}
+        # Track typing indicator tasks
+        self._typing_tasks: dict[int, asyncio.Task] = {}
 
     async def start(self) -> None:
         """Start the Discord bot with WebSocket gateway connection."""
@@ -100,11 +103,42 @@ class DiscordChannel(BaseChannel):
         """Stop the Discord bot."""
         self._running = False
 
+        # Cancel all typing tasks
+        for task in self._typing_tasks.values():
+            task.cancel()
+        self._typing_tasks.clear()
+
         if self._client:
             logger.info("Stopping Discord bot...")
             await self._client.close()
             self._client = None
             self._guild = None
+
+    async def _start_typing(self, message_id: int, channel: discord.TextChannel) -> None:
+        """Start a background task that maintains typing indicator."""
+
+        async def typing_loop() -> None:
+            try:
+                while True:
+                    await channel.typing()
+                    await asyncio.sleep(8)
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.debug(f"Typing indicator stopped: {e}")
+
+        task = asyncio.create_task(typing_loop())
+        self._typing_tasks[message_id] = task
+
+    async def _stop_typing(self, message_id: int) -> None:
+        """Stop the typing indicator task."""
+        if message_id in self._typing_tasks:
+            task = self._typing_tasks.pop(message_id)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     async def send(self, msg: OutboundMessage) -> None:
         """Send a message through Discord."""
@@ -112,9 +146,11 @@ class DiscordChannel(BaseChannel):
             logger.warning("Discord bot not running")
             return
 
-        # Mark original message as complete if we have the message reference
+        # Get original message for reply before marking complete
         original_msg_id = msg.metadata.get("original_message_id")
+        original_message: "DiscordMessage | None" = None
         if original_msg_id and original_msg_id in self._processing_messages:
+            _, original_message = self._processing_messages[original_msg_id]
             await self._mark_complete(original_msg_id)
 
         # Determine target channel
@@ -136,9 +172,9 @@ class DiscordChannel(BaseChannel):
                 logger.error(f"Channel {channel_id} is not a text channel")
                 return
 
-            # Send as plain text (split if too long)
+            # Send as reply to original message (if we have it)
             content = msg.content
-            await self._send_message(channel, content)
+            await self._send_message(channel, content, reply_to=original_message)
 
         except discord.Forbidden:
             logger.error(f"Permission denied sending to channel {channel_id}")
@@ -184,12 +220,16 @@ class DiscordChannel(BaseChannel):
 
         # Add processing reaction
         try:
-            await message.add_reaction("\u23f3")  # Hourglass
+            await message.add_reaction(self.config.emoji_processing)
             self._processing_messages[message.id] = (message.channel.id, message)
         except discord.Forbidden:
             logger.warning("Cannot add reactions - missing permissions")
         except Exception as e:
             logger.warning(f"Failed to add processing reaction: {e}")
+
+        # Start typing indicator
+        if isinstance(message.channel, discord.TextChannel):
+            await self._start_typing(message.id, message.channel)
 
         # Extract and clean content
         content = self._clean_message_content(message)
@@ -342,14 +382,26 @@ class DiscordChannel(BaseChannel):
         embed.set_footer(text="Nanobot")
         return embed
 
-    async def _send_message(self, channel: discord.TextChannel, content: str) -> None:
+    async def _send_message(
+        self,
+        channel: discord.TextChannel,
+        content: str,
+        reply_to: "DiscordMessage | None" = None,
+    ) -> None:
         """Send a message, splitting if it exceeds Discord's 2000 char limit."""
         if len(content) <= self.MESSAGE_MAX_LENGTH:
-            await channel.send(content)
+            if reply_to:
+                await channel.send(content, reference=reply_to)
+            else:
+                await channel.send(content)
         else:
             chunks = self._split_content(content, self.MESSAGE_MAX_LENGTH)
-            for chunk in chunks:
-                await channel.send(chunk)
+            for i, chunk in enumerate(chunks):
+                # Only reply with the first chunk
+                if i == 0 and reply_to:
+                    await channel.send(chunk, reference=reply_to)
+                else:
+                    await channel.send(chunk)
 
     async def _send_long_message(self, channel: discord.TextChannel, content: str) -> None:
         """Send a long message by splitting into multiple parts."""
@@ -408,6 +460,9 @@ class DiscordChannel(BaseChannel):
 
     async def _mark_complete(self, message_id: int) -> None:
         """Mark a message as complete by updating reactions."""
+        # Stop typing indicator first
+        await self._stop_typing(message_id)
+
         if message_id not in self._processing_messages:
             return
 
@@ -416,9 +471,9 @@ class DiscordChannel(BaseChannel):
         try:
             # Remove processing reaction
             if self._client and self._client.user:
-                await message.remove_reaction("\u23f3", self._client.user)
+                await message.remove_reaction(self.config.emoji_processing, self._client.user)
             # Add complete reaction
-            await message.add_reaction("\u2705")  # Check mark
+            await message.add_reaction(self.config.emoji_complete)
         except discord.Forbidden:
             logger.debug("Cannot modify reactions - missing permissions")
         except discord.NotFound:
@@ -428,6 +483,9 @@ class DiscordChannel(BaseChannel):
 
     async def _mark_error(self, message_id: int) -> None:
         """Mark a message as failed by updating reactions."""
+        # Stop typing indicator first
+        await self._stop_typing(message_id)
+
         if message_id not in self._processing_messages:
             return
 
@@ -436,9 +494,9 @@ class DiscordChannel(BaseChannel):
         try:
             # Remove processing reaction
             if self._client and self._client.user:
-                await message.remove_reaction("\u23f3", self._client.user)
+                await message.remove_reaction(self.config.emoji_processing, self._client.user)
             # Add error reaction
-            await message.add_reaction("\u274c")  # X mark
+            await message.add_reaction(self.config.emoji_error)
         except discord.Forbidden:
             logger.debug("Cannot modify reactions - missing permissions")
         except discord.NotFound:

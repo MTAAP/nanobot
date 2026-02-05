@@ -210,6 +210,7 @@ def gateway(
         exec_config=config.tools.exec,
         channel_manager=channels,
         cron_service=cron,
+        mcp_config=config.tools.mcp,
     )
 
     # Set the cron callback using agent's process_direct

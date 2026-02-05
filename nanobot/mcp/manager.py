@@ -91,6 +91,10 @@ class MCPManager:
                 logger.debug(f"MCP server {server_name} is disabled, skipping")
                 continue
 
+            logger.debug(
+                f"MCP server {server_name} config: cmd={server_config.command}, "
+                f"args={server_config.args}, env={server_config.env}"
+            )
             client = MCPClient(
                 name=server_name,
                 command=server_config.command,
