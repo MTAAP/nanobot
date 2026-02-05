@@ -211,6 +211,7 @@ def gateway(
         channel_manager=channels,
         cron_service=cron,
         mcp_config=config.tools.mcp,
+        memory_extraction=config.agents.defaults.memory_extraction,
     )
 
     # Set the cron callback using agent's process_direct
@@ -311,6 +312,7 @@ def agent(
         workspace=config.workspace_path,
         brave_api_key=config.tools.web.search.api_key or None,
         exec_config=config.tools.exec,
+        memory_extraction=config.agents.defaults.memory_extraction,
     )
 
     if message:

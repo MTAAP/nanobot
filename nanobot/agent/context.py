@@ -10,6 +10,19 @@ from loguru import logger
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
 
+try:
+    from nanobot.agent.memory.store import (
+        EmbeddingService,
+        LEARNINGS_NAMESPACE,
+        TOOLS_NAMESPACE,
+        USER_NAMESPACE,
+        VectorMemoryStore,
+    )
+
+    VECTOR_MEMORY_AVAILABLE = True
+except Exception:
+    VECTOR_MEMORY_AVAILABLE = False
+
 # Template for TOOLS.md when created for the first time
 TOOLS_MD_TEMPLATE = """# Tool Usage Patterns
 
@@ -86,13 +99,46 @@ class ContextBuilder:
     into a coherent prompt for the LLM.
     """
 
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
+    BOOTSTRAP_FILES = [
+        "AGENTS.md",
+        "SOUL.md",
+        "USER.md",
+        "TOOLS.md",
+        "IDENTITY.md",
+        "LEARNINGS.md",
+    ]
 
-    def __init__(self, workspace: Path):
+    def __init__(
+        self,
+        workspace: Path,
+        use_vector_memory: bool = True,
+        embedding_model: str = "text-embedding-3-small",
+        max_memories: int = 1000,
+    ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
         self._ensure_tools_md()
+
+        # Optional vector memory (for facts and lessons)
+        self.vector_memory: VectorMemoryStore | None = None
+        if use_vector_memory and VECTOR_MEMORY_AVAILABLE:
+            try:
+                vector_db_path = Path("memory") / "vectors.db"
+                embedding_service = EmbeddingService(model=embedding_model)
+                self.vector_memory = VectorMemoryStore(
+                    db_path=vector_db_path,
+                    base_dir=workspace,
+                    embedding_service=embedding_service,
+                    max_memories=max_memories,
+                )
+                logger.debug(
+                    "Vector memory initialized at %s",
+                    str((workspace / vector_db_path).resolve()),
+                )
+            except Exception as e:
+                logger.warning(f"Failed to initialize vector memory: {e}")
+                self.vector_memory = None
 
     def _ensure_tools_md(self) -> None:
         """Create TOOLS.md with template if it doesn't exist."""
@@ -104,7 +150,12 @@ class ContextBuilder:
             except Exception as e:
                 logger.warning(f"Failed to create TOOLS.md: {e}")
 
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    def build_system_prompt(
+        self,
+        skill_names: list[str] | None = None,
+        query: str | None = None,
+        namespace: str | None = None,
+    ) -> str:
         """
         Build the system prompt from bootstrap files, memory, and skills.
 
@@ -124,10 +175,10 @@ class ContextBuilder:
         if bootstrap:
             parts.append(bootstrap)
 
-        # Memory context
-        memory = self.memory.get_memory_context()
-        if memory:
-            parts.append(f"# Memory\n\n{memory}")
+        # Memory context (file + vector recall)
+        memory_context = self._build_memory_context(query=query, namespace=namespace)
+        if memory_context:
+            parts.append(f"# Memory\n\n{memory_context}")
 
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
@@ -283,6 +334,7 @@ When you install a new MCP server, document its tools in TOOLS.md."""
         skill_names: list[str] | None = None,
         media: list[str] | None = None,
         channel_context: str = "",
+        namespace: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Build the complete message list for an LLM call.
@@ -300,7 +352,11 @@ When you install a new MCP server, document its tools in TOOLS.md."""
         messages = []
 
         # System prompt
-        system_prompt = self.build_system_prompt(skill_names)
+        system_prompt = self.build_system_prompt(
+            skill_names=skill_names,
+            query=current_message,
+            namespace=namespace,
+        )
         messages.append({"role": "system", "content": system_prompt})
 
         # History
@@ -319,6 +375,106 @@ When you install a new MCP server, document its tools in TOOLS.md."""
         messages.append({"role": "user", "content": user_content})
 
         return messages
+
+    def _build_memory_context(self, query: str | None, namespace: str | None) -> str:
+        """Build memory context, using file memory and optional vector recall."""
+        parts: list[str] = []
+
+        # File-based memory (long-term + today's notes)
+        file_memory = self.memory.get_memory_context()
+        if file_memory:
+            parts.append("## Notes\n" + file_memory)
+
+        if not self.vector_memory or not query:
+            return "\n\n".join(parts) if parts else ""
+
+        # Per-session factual recall
+        try:
+            fact_results = self.vector_memory.search(
+                query,
+                top_k=5,
+                threshold=0.7,
+                namespace=namespace or "default",
+            )
+        except Exception as e:
+            logger.warning(f"Vector memory search failed for facts: {e}")
+            fact_results = []
+
+        if fact_results:
+            recalled = [
+                f"- {item.content} (relevance: {score:.0%})"
+                for item, score in fact_results
+            ]
+            parts.append("## Recalled Facts\n" + "\n".join(recalled))
+
+        # Cross-session lessons and feedback-derived learnings
+        try:
+            lesson_results = self.vector_memory.search(
+                query,
+                top_k=5,
+                threshold=0.7,
+                namespace=LEARNINGS_NAMESPACE,
+            )
+        except Exception as e:
+            logger.warning(f"Vector memory search failed for lessons: {e}")
+            lesson_results = []
+
+        if lesson_results:
+            lessons = [
+                f"- {item.content} (relevance: {score:.0%})"
+                for item, score in lesson_results
+            ]
+            parts.append("## Prior Lessons\n" + "\n".join(lessons))
+
+        # User profile facts
+        try:
+            user_results = self.vector_memory.search(
+                query,
+                top_k=3,
+                threshold=0.6,
+                namespace=USER_NAMESPACE,
+            )
+        except Exception as e:
+            logger.warning(f"Vector memory search failed for user: {e}")
+            user_results = []
+        if user_results:
+            user_facts = [
+                f"- {item.content} (relevance: {score:.0%})"
+                for item, score in user_results
+            ]
+            parts.append("## User Profile\n" + "\n".join(user_facts))
+
+        # Tool-specific lessons when query suggests tool use
+        q_lower = (query or "").lower()
+        tool_hints = ("tool", "run", "execute", "command", "file", "read", "write", "edit")
+        if any(h in q_lower for h in tool_hints):
+            try:
+                tool_results = self.vector_memory.search(
+                    query,
+                    top_k=3,
+                    threshold=0.6,
+                    namespace=TOOLS_NAMESPACE,
+                )
+            except Exception as e:
+                logger.warning(f"Vector memory search failed for tools: {e}")
+                tool_results = []
+            if tool_results:
+                tool_lessons = [
+                    f"- {item.content} (relevance: {score:.0%})"
+                    for item, score in tool_results
+                ]
+                parts.append("## Tool-Specific Lessons\n" + "\n".join(tool_lessons))
+
+        return "\n\n".join(parts) if parts else ""
+
+    def close(self) -> None:
+        """Clean up resources owned by the context builder."""
+        if self.vector_memory:
+            try:
+                self.vector_memory.close()
+            except Exception:
+                pass
+            self.vector_memory = None
 
     def _build_user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
         """Build user message content with optional base64-encoded images."""

@@ -61,6 +61,22 @@ class ChannelsConfig(BaseModel):
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
 
 
+class MemoryExtractionConfig(BaseModel):
+    """Memory extraction and consolidation configuration."""
+
+    enabled: bool = True
+    extraction_model: str = "gpt-4o-mini"
+    embedding_model: str = "text-embedding-3-small"
+    max_memories: int = 1000
+    extraction_interval: int = 10
+    max_facts_per_extraction: int = 5
+    max_lessons_per_extraction: int = 3
+    enable_pre_compaction_flush: bool = True
+    enable_tool_lessons: bool = True
+    lesson_generalization_model: str = "gpt-4o-mini"
+    candidate_threshold: float = 0.5
+
+
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
 
@@ -69,6 +85,9 @@ class AgentDefaults(BaseModel):
     max_tokens: int = 8192
     temperature: float = 0.7
     max_tool_iterations: int = 20
+    memory_extraction: MemoryExtractionConfig = Field(
+        default_factory=MemoryExtractionConfig
+    )
 
 
 class AgentsConfig(BaseModel):

@@ -3,11 +3,14 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.memory import MemoryStore
+from nanobot.agent.memory.consolidator import MemoryConsolidator
+from nanobot.agent.memory.extractor import MemoryExtractor
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
 from nanobot.agent.tools.message import MessageTool
@@ -20,9 +23,14 @@ from nanobot.bus.queue import MessageBus
 from nanobot.channels.manager import ChannelManager
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import SessionManager
+from nanobot.session.compaction import CompactionConfig, SessionCompactor
 
 if TYPE_CHECKING:
-    from nanobot.config.schema import ExecToolConfig, MCPConfig
+    from nanobot.config.schema import (
+        ExecToolConfig,
+        MemoryExtractionConfig,
+        MCPConfig,
+    )
     from nanobot.cron.service import CronService
     from nanobot.mcp import MCPManager
 
@@ -51,8 +59,17 @@ class AgentLoop:
         channel_manager: ChannelManager | None = None,
         cron_service: "CronService | None" = None,
         mcp_config: "MCPConfig | None" = None,
+        extraction_model: str = "gpt-4o-mini",
+        embedding_model: str = "text-embedding-3-small",
+        max_memories: int = 1000,
+        extraction_interval: int = 10,
+        memory_extraction: "MemoryExtractionConfig | None" = None,
     ):
-        from nanobot.config.schema import ExecToolConfig, MCPConfig
+        from nanobot.config.schema import (
+            ExecToolConfig,
+            MemoryExtractionConfig,
+            MCPConfig,
+        )
 
         self.bus = bus
         self.provider = provider
@@ -65,9 +82,41 @@ class AgentLoop:
         self.cron_service = cron_service
         self.mcp_config = mcp_config or MCPConfig()
 
-        self.context = ContextBuilder(workspace)
+        mem_cfg = memory_extraction or MemoryExtractionConfig()
+        _embed = mem_cfg.embedding_model if memory_extraction else embedding_model
+        _max_mem = mem_cfg.max_memories if memory_extraction else max_memories
+        _ext_model = mem_cfg.extraction_model if memory_extraction else extraction_model
+        _interval = mem_cfg.extraction_interval if memory_extraction else extraction_interval
+
+        # Context and memory
+        self.context = ContextBuilder(
+            workspace,
+            use_vector_memory=mem_cfg.enabled,
+            embedding_model=_embed,
+            max_memories=_max_mem,
+        )
+        self.memory = MemoryStore(workspace)
         self.sessions = SessionManager(workspace)
         self.tools = ToolRegistry()
+
+        # Memory extraction and consolidation
+        self._extractor = MemoryExtractor(
+            model=_ext_model,
+            max_facts=mem_cfg.max_facts_per_extraction,
+        )
+        self._consolidator = (
+            MemoryConsolidator(
+                store=self.context.vector_memory,
+                model=_ext_model,
+                candidate_threshold=mem_cfg.candidate_threshold,
+            )
+            if getattr(self.context, "vector_memory", None) and mem_cfg.enabled
+            else None
+        )
+        self._compactor = SessionCompactor(config=CompactionConfig())
+        self._extraction_interval = _interval
+        self._enable_pre_compaction_flush = mem_cfg.enable_pre_compaction_flush
+        self._enable_tool_lessons = mem_cfg.enable_tool_lessons
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -176,6 +225,12 @@ class AgentLoop:
         if self.mcp_manager:
             await self.mcp_manager.stop()
 
+        # Close context resources (e.g. vector memory)
+        try:
+            self.context.close()
+        except Exception:
+            pass
+
         logger.info("Agent loop stopping")
 
     async def _process_message(self, msg: InboundMessage) -> OutboundMessage | None:
@@ -225,11 +280,22 @@ class AgentLoop:
         channel_context = msg.metadata.get("channel_context", "") if msg.metadata else ""
 
         # Build initial messages (use get_history for LLM-formatted messages)
+        history = session.get_history()
+        if (
+            getattr(self, "_enable_pre_compaction_flush", True)
+            and len(history) >= self._compactor.config.threshold
+            and self._consolidator
+        ):
+            await self._pre_compaction_flush(history, msg.session_key)
+        if len(history) > self._compactor.config.threshold:
+            history = self._compactor.compact(history)
+
         messages = self.context.build_messages(
-            history=session.get_history(),
+            history=history,
             current_message=msg.content,
             media=msg.media if msg.media else None,
             channel_context=channel_context,
+            namespace=msg.session_key,
         )
 
         # Agent loop
@@ -283,6 +349,9 @@ class AgentLoop:
         session.add_message("assistant", final_content)
         self.sessions.save(session)
 
+        # Periodic extraction and consolidation of facts and lessons
+        await self._maybe_extract_and_consolidate(session, msg.session_key)
+
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=final_content, metadata=msg.metadata
         )
@@ -309,6 +378,13 @@ class AgentLoop:
         # Use the origin session for context
         session_key = f"{origin_channel}:{origin_chat_id}"
         session = self.sessions.get_or_create(session_key)
+        history_sys = session.get_history()
+        if (
+            getattr(self, "_enable_pre_compaction_flush", True)
+            and len(history_sys) >= self._compactor.config.threshold
+            and self._consolidator
+        ):
+            await self._pre_compaction_flush(history_sys, session_key)
 
         # Update tool contexts
         message_tool = self.tools.get("message")
@@ -334,8 +410,14 @@ class AgentLoop:
             mcp_install_tool.set_context(origin_channel, origin_chat_id)
 
         # Build messages with the announce content
+        history = session.get_history()
+        if len(history) > self._compactor.config.threshold:
+            history = self._compactor.compact(history)
+
         messages = self.context.build_messages(
-            history=session.get_history(), current_message=msg.content
+            history=history,
+            current_message=msg.content,
+            namespace=session_key,
         )
 
         # Agent loop (limited for announce handling)
@@ -380,10 +462,119 @@ class AgentLoop:
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
         self.sessions.save(session)
+        await self._maybe_extract_and_consolidate(session, session_key)
 
         return OutboundMessage(
-            channel=origin_channel, chat_id=origin_chat_id, content=final_content
+            channel=origin_channel,
+            chat_id=origin_chat_id,
+            content=final_content,
         )
+
+    async def _pre_compaction_flush(
+        self,
+        history: list[dict[str, Any]],
+        namespace: str,
+    ) -> None:
+        """Run silent memory extraction before compaction to persist important facts."""
+        if not self._consolidator or len(history) < 10:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            extracted = await loop.run_in_executor(
+                None,
+                self._extractor.extract_for_pre_compaction,
+                history,
+            )
+            if extracted:
+                await loop.run_in_executor(
+                    None,
+                    self._consolidator.consolidate,
+                    extracted,
+                    namespace,
+                )
+                logger.debug(
+                    "Pre-compaction flush: consolidated %s facts", len(extracted)
+                )
+        except Exception as e:
+            logger.warning(f"Pre-compaction memory flush failed: {e}")
+
+    async def _maybe_extract_and_consolidate(
+        self,
+        session: "Session",
+        namespace: str,
+    ) -> None:
+        """Trigger memory extraction/consolidation when conditions are met."""
+        if not self._consolidator:
+            return
+
+        user_count = sum(1 for m in session.messages if m.get("role") == "user")
+        if user_count <= 0 or user_count % self._extraction_interval != 0:
+            return
+
+        history = session.get_history()[-20:]
+        await self._extract_and_consolidate(history, namespace)
+
+    async def _extract_and_consolidate(
+        self,
+        messages: list[dict[str, Any]],
+        namespace: str,
+    ) -> None:
+        """Extract facts and lessons from conversation and consolidate into vector memory."""
+        if not self._consolidator:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+
+            # Facts
+            extracted = await loop.run_in_executor(
+                None,
+                self._extractor.extract,
+                messages,
+            )
+            if extracted:
+                await loop.run_in_executor(
+                    None,
+                    self._consolidator.consolidate,
+                    extracted,
+                    namespace,
+                )
+                logger.debug(f"Extracted and consolidated {len(extracted)} facts")
+
+            # Lessons (stored in dedicated namespace)
+            lessons = await loop.run_in_executor(
+                None,
+                self._extractor.extract_lessons,
+                messages,
+            )
+            if lessons:
+                await loop.run_in_executor(
+                    None,
+                    self._consolidator.consolidate,
+                    lessons,
+                    namespace,
+                )
+                logger.debug(f"Extracted and consolidated {len(lessons)} lessons")
+
+            # Tool-specific lessons (routed to tools namespace by consolidator)
+            if getattr(self, "_enable_tool_lessons", True):
+                tool_lessons = await loop.run_in_executor(
+                    None,
+                    self._extractor.extract_tool_lessons,
+                    messages,
+                )
+                if tool_lessons:
+                    await loop.run_in_executor(
+                        None,
+                        self._consolidator.consolidate,
+                        tool_lessons,
+                        namespace,
+                    )
+                    logger.debug(
+                        f"Extracted and consolidated {len(tool_lessons)} tool lessons"
+                    )
+        except Exception as e:
+            logger.warning(f"Memory extraction/consolidation failed: {e}")
 
     async def process_direct(self, content: str, session_key: str = "cli:direct") -> str:
         """
