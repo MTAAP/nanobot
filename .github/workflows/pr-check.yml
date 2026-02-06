@@ -34,4 +34,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: docker compose build nanobot
-      - run: docker compose run --rm --no-deps nanobot --version
+      - run: docker compose run --rm --no-deps --entrypoint nanobot nanobot --version

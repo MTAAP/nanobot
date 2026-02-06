@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic_settings import BaseSettings
 
 
@@ -39,6 +39,8 @@ class FeishuConfig(BaseModel):
 class DiscordConfig(BaseModel):
     """Discord channel configuration."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     enabled: bool = False
     token: str = ""  # Bot token from Discord Developer Portal
     guild_id: str = ""  # The server ID where nanobot lives
@@ -64,6 +66,8 @@ class ChannelsConfig(BaseModel):
 class ContextConfig(BaseModel):
     """Context window management configuration."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     max_context_tokens: int = Field(default=100000, alias="maxContextTokens")
     system_prompt_budget: int = Field(default=20000, alias="systemPromptBudget")
     history_budget: int = Field(default=60000, alias="historyBudget")
@@ -74,6 +78,8 @@ class ContextConfig(BaseModel):
 class CompactionConfig(BaseModel):
     """Message compaction configuration."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     enabled: bool = True
     threshold: float = 0.8  # Compact at 80% capacity
     model: str | None = None  # None = use main model
@@ -83,6 +89,8 @@ class CompactionConfig(BaseModel):
 
 class MemoryConfig(BaseModel):
     """Semantic memory configuration."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     enabled: bool = True
     embedding_model: str = Field(default="openai/text-embedding-3-small", alias="embeddingModel")
@@ -107,6 +115,8 @@ class MemoryConfig(BaseModel):
 class MemoryExtractionConfig(BaseModel):
     """Configuration for automatic memory extraction and consolidation."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     enabled: bool = False
     extraction_model: str = Field(default="gpt-4o-mini", alias="extractionModel")
     embedding_model: str = Field(default="text-embedding-3-small", alias="embeddingModel")
@@ -122,6 +132,8 @@ class MemoryExtractionConfig(BaseModel):
 class DaemonConfig(BaseModel):
     """Daemon mode: three-tier autonomous agent execution."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     enabled: bool = True
     interval: int = Field(default=300, alias="interval")
     triage_model: str | None = Field(default=None, alias="triageModel")
@@ -135,6 +147,8 @@ class DaemonConfig(BaseModel):
 
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
+
+    model_config = ConfigDict(populate_by_name=True)
 
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
