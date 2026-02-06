@@ -1,4 +1,4 @@
-"""Memory system for persistent agent memory."""
+"""File-based memory store (daily notes and MEMORY.md)."""
 
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +17,7 @@ class MemoryStore:
         self.workspace = workspace
         self.memory_dir = ensure_dir(workspace / "memory")
         self.memory_file = self.memory_dir / "MEMORY.md"
+        self.learnings_file = workspace / "LEARNINGS.md"
 
     def get_today_file(self) -> Path:
         """Get path to today's memory file."""
@@ -37,7 +38,6 @@ class MemoryStore:
             existing = today_file.read_text(encoding="utf-8")
             content = existing + "\n" + content
         else:
-            # Add header for new day
             header = f"# {today_date()}\n\n"
             content = header + content
 
@@ -54,15 +54,7 @@ class MemoryStore:
         self.memory_file.write_text(content, encoding="utf-8")
 
     def get_recent_memories(self, days: int = 7) -> str:
-        """
-        Get memories from the last N days.
-
-        Args:
-            days: Number of days to look back.
-
-        Returns:
-            Combined memory content.
-        """
+        """Get memories from the last N days."""
         from datetime import timedelta
 
         memories = []
@@ -88,22 +80,45 @@ class MemoryStore:
         return sorted(files, reverse=True)
 
     def get_memory_context(self) -> str:
-        """
-        Get memory context for the agent.
-
-        Returns:
-            Formatted memory context including long-term and recent memories.
-        """
+        """Get memory context for the agent."""
         parts = []
 
-        # Long-term memory
         long_term = self.read_long_term()
         if long_term:
             parts.append("## Long-term Memory\n" + long_term)
 
-        # Today's notes
         today = self.read_today()
         if today:
             parts.append("## Today's Notes\n" + today)
 
         return "\n\n".join(parts) if parts else ""
+
+    def append_learning(
+        self,
+        context: str,
+        mistake: str,
+        lesson: str,
+        action: str,
+        timestamp: datetime | None = None,
+    ) -> None:
+        """Append a structured learning entry to LEARNINGS.md. Best-effort; never raises."""
+        ts = (timestamp or datetime.now()).strftime("%Y-%m-%d")
+        try:
+            existing = ""
+            if self.learnings_file.exists():
+                existing = self.learnings_file.read_text(encoding="utf-8")
+
+            entry_lines = [
+                f"- **Date**: {ts}",
+                f"  **Context**: {context}",
+                f"  **Mistake**: {mistake}",
+                f"  **Lesson**: {lesson}",
+                f"  **Action**: {action}",
+                "",
+            ]
+            entry = "\n".join(entry_lines)
+
+            content = existing + ("\n" if existing and not existing.endswith("\n") else "") + entry
+            self.learnings_file.write_text(content, encoding="utf-8")
+        except Exception:
+            return

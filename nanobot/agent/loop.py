@@ -3,7 +3,7 @@
 import asyncio
 import json
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -19,6 +19,8 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.manager import ChannelManager
 from nanobot.providers.base import LLMProvider
+from nanobot.session.compaction import CompactionConfig as SessionCompactionConfig
+from nanobot.session.compaction import SessionCompactor
 from nanobot.session.manager import SessionManager
 
 if TYPE_CHECKING:
@@ -28,6 +30,7 @@ if TYPE_CHECKING:
         ExecToolConfig,
         MCPConfig,
         MemoryConfig,
+        MemoryExtractionConfig,
     )
     from nanobot.cron.service import CronService
     from nanobot.mcp import MCPManager
@@ -83,6 +86,7 @@ class AgentLoop:
         compaction_config: "CompactionConfig | None" = None,
         memory_config: "MemoryConfig | None" = None,
         provider_resolver: "ProviderResolver | None" = None,
+        memory_extraction: "MemoryExtractionConfig | None" = None,
     ):
         from nanobot.config.schema import (
             CompactionConfig,
@@ -107,6 +111,11 @@ class AgentLoop:
         self.memory_config = memory_config or MemoryConfig()
         self.provider_resolver = provider_resolver
 
+        # Memory extraction config
+        from nanobot.config.schema import MemoryExtractionConfig
+
+        self._extraction_config = memory_extraction or MemoryExtractionConfig()
+
         # Vector store for semantic memory (initialized in run())
         self.vector_store: "VectorStore | None" = None
         # Core memory (initialized in _init_memory())
@@ -122,6 +131,17 @@ class AgentLoop:
         )
         self.sessions = SessionManager(workspace)
         self.tools = ToolRegistry()
+
+        # Memory extraction and consolidation (lightweight vector store)
+        self._extractor = None
+        self._consolidator = None
+        self._session_compactor = SessionCompactor(
+            config=SessionCompactionConfig(),
+        )
+        self._extraction_interval = self._extraction_config.extraction_interval
+        self._enable_pre_compaction_flush = self._extraction_config.enable_pre_compaction_flush
+        self._enable_tool_lessons = self._extraction_config.enable_tool_lessons
+
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -309,6 +329,9 @@ class AgentLoop:
         # Initialize memory if enabled
         self._init_memory()
 
+        # Initialize memory extraction pipeline
+        self._init_extraction()
+
         # Check for restart signal (e.g., after MCP server installation)
         await self._check_restart_signal()
 
@@ -345,6 +368,13 @@ class AgentLoop:
         # Stop MCP servers
         if self.mcp_manager:
             await self.mcp_manager.stop()
+
+        # Close extraction vector store
+        if self._consolidator and hasattr(self._consolidator, "store"):
+            try:
+                self._consolidator.store.close()
+            except Exception:
+                pass
 
         logger.info("Agent loop stopping")
 
@@ -473,6 +503,9 @@ class AgentLoop:
         # Index conversation to memory (async, don't block response)
         await self._index_conversation(msg.session_key, msg.content, final_content)
 
+        # Periodic extraction and consolidation of facts and lessons
+        await self._maybe_extract_and_consolidate(session, msg.session_key)
+
         return OutboundMessage(
             channel=msg.channel, chat_id=msg.chat_id, content=final_content, metadata=msg.metadata
         )
@@ -579,6 +612,8 @@ class AgentLoop:
         session.add_message("user", f"[System: {msg.sender_id}] {msg.content}")
         session.add_message("assistant", final_content)
         self.sessions.save(session)
+
+        await self._maybe_extract_and_consolidate(session, session_key)
 
         return OutboundMessage(
             channel=origin_channel, chat_id=origin_chat_id, content=final_content
@@ -929,6 +964,136 @@ class AgentLoop:
         except Exception as e:
             logger.error(f"Failed to initialize memory: {e}")
             self.vector_store = None
+
+    def _init_extraction(self) -> None:
+        """Initialize the memory extraction/consolidation pipeline."""
+        if not self._extraction_config.enabled:
+            return
+
+        try:
+            from nanobot.agent.memory.consolidator import MemoryConsolidator
+            from nanobot.agent.memory.extractor import MemoryExtractor
+            from nanobot.agent.memory.store import (
+                EmbeddingService,
+                VectorMemoryStore,
+            )
+
+            cfg = self._extraction_config
+            self._extractor = MemoryExtractor(
+                model=cfg.extraction_model,
+                max_facts=cfg.max_facts_per_extraction,
+            )
+
+            # Create a dedicated vector store for extracted facts
+            from pathlib import Path
+
+            vector_db_path = Path("memory") / "extraction_vectors.db"
+            embedding_service = EmbeddingService(model=cfg.embedding_model)
+            extraction_store = VectorMemoryStore(
+                db_path=vector_db_path,
+                base_dir=self.workspace,
+                embedding_service=embedding_service,
+                max_memories=cfg.max_memories,
+            )
+
+            # Resolve extraction provider if available
+            extraction_provider = self._resolve_subsystem_provider(
+                self.memory_config.extraction_provider
+                if hasattr(self.memory_config, "extraction_provider")
+                else None
+            )
+
+            self._consolidator = MemoryConsolidator(
+                store=extraction_store,
+                model=cfg.extraction_model,
+                candidate_threshold=cfg.candidate_threshold,
+                provider=(extraction_provider if extraction_provider != self.provider else None),
+            )
+
+            # Pass extractor to session compactor
+            self._session_compactor = SessionCompactor(
+                config=SessionCompactionConfig(),
+                extractor=self._extractor,
+            )
+
+            logger.info(
+                "Memory extraction initialized: model=%s, interval=%d",
+                cfg.extraction_model,
+                cfg.extraction_interval,
+            )
+        except Exception as e:
+            logger.warning("Failed to initialize memory extraction: %s", e)
+            self._extractor = None
+            self._consolidator = None
+
+    async def _pre_compaction_flush(
+        self,
+        history: list[dict[str, Any]],
+        namespace: str,
+    ) -> None:
+        """Run silent memory extraction before compaction."""
+        if not self._consolidator or not self._extractor or len(history) < 10:
+            return
+        try:
+            extracted = await self._extractor.extract_for_pre_compaction(history)
+            if extracted:
+                await self._consolidator.consolidate(extracted, namespace)
+                logger.debug(
+                    "Pre-compaction flush: consolidated %d facts",
+                    len(extracted),
+                )
+        except Exception as e:
+            logger.warning("Pre-compaction memory flush failed: %s", e)
+
+    async def _maybe_extract_and_consolidate(
+        self,
+        session: "Session",
+        namespace: str,
+    ) -> None:
+        """Trigger extraction/consolidation when conditions are met."""
+        if not self._consolidator or not self._extractor:
+            return
+
+        user_count = sum(1 for m in session.messages if m.get("role") == "user")
+        if user_count <= 0 or user_count % self._extraction_interval != 0:
+            return
+
+        history = session.get_history()[-20:]
+        await self._extract_and_consolidate(history, namespace)
+
+    async def _extract_and_consolidate(
+        self,
+        messages: list[dict[str, Any]],
+        namespace: str,
+    ) -> None:
+        """Extract facts and lessons from conversation and consolidate."""
+        if not self._consolidator or not self._extractor:
+            return
+
+        try:
+            # Facts
+            extracted = await self._extractor.extract(messages)
+            if extracted:
+                await self._consolidator.consolidate(extracted, namespace)
+                logger.debug("Extracted and consolidated %d facts", len(extracted))
+
+            # Lessons (stored in dedicated namespace)
+            lessons = await self._extractor.extract_lessons(messages)
+            if lessons:
+                await self._consolidator.consolidate(lessons, namespace)
+                logger.debug("Extracted and consolidated %d lessons", len(lessons))
+
+            # Tool-specific lessons
+            if self._enable_tool_lessons:
+                tool_lessons = self._extractor.extract_tool_lessons(messages)
+                if tool_lessons:
+                    await self._consolidator.consolidate(tool_lessons, namespace)
+                    logger.debug(
+                        "Extracted and consolidated %d tool lessons",
+                        len(tool_lessons),
+                    )
+        except Exception as e:
+            logger.warning("Memory extraction/consolidation failed: %s", e)
 
     async def _init_mcp(self) -> None:
         """Initialize MCP manager and register MCP tools."""

@@ -104,6 +104,21 @@ class MemoryConfig(BaseModel):
     entities_db_path: str = Field(default="~/.nanobot/memory/entities.db", alias="entitiesDbPath")
 
 
+class MemoryExtractionConfig(BaseModel):
+    """Configuration for automatic memory extraction and consolidation."""
+
+    enabled: bool = False
+    extraction_model: str = Field(default="gpt-4o-mini", alias="extractionModel")
+    embedding_model: str = Field(default="text-embedding-3-small", alias="embeddingModel")
+    max_memories: int = Field(default=1000, alias="maxMemories")
+    extraction_interval: int = Field(default=10, alias="extractionInterval")
+    max_facts_per_extraction: int = Field(default=5, alias="maxFactsPerExtraction")
+    max_lessons_per_extraction: int = Field(default=3, alias="maxLessonsPerExtraction")
+    enable_pre_compaction_flush: bool = Field(default=True, alias="enablePreCompactionFlush")
+    enable_tool_lessons: bool = Field(default=True, alias="enableToolLessons")
+    candidate_threshold: float = Field(default=0.7, alias="candidateThreshold")
+
+
 class AgentDefaults(BaseModel):
     """Default agent configuration."""
 
@@ -116,6 +131,9 @@ class AgentDefaults(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    memory_extraction: MemoryExtractionConfig = Field(
+        default_factory=MemoryExtractionConfig, alias="memoryExtraction"
+    )
 
 
 class AgentsConfig(BaseModel):
