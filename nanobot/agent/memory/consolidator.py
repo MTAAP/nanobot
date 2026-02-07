@@ -154,11 +154,10 @@ class MemoryConsolidator:
                 fact_type=fact.fact_type,
             )
         logger.info(
-            "consolidation_complete added=%d updated=%d deleted=%d skipped=%d",
-            self._last_metrics.added,
-            self._last_metrics.updated,
-            self._last_metrics.deleted,
-            self._last_metrics.skipped,
+            f"consolidation_complete added={self._last_metrics.added} "
+            f"updated={self._last_metrics.updated} "
+            f"deleted={self._last_metrics.deleted} "
+            f"skipped={self._last_metrics.skipped}"
         )
         return results
 
@@ -190,7 +189,7 @@ class MemoryConsolidator:
             result = await self._llm_decide_operation(fact, similar)
             return result, valid_ids
         except Exception as e:
-            logger.warning("LLM decision failed: %s", e)
+            logger.warning(f"LLM decision failed: {e}")
             return (
                 ConsolidationResult(
                     operation=Operation.ADD,
@@ -258,7 +257,7 @@ Response:"""
         try:
             decision = ConsolidationDecision(**json.loads(raw))
         except (json.JSONDecodeError, ValidationError) as e:
-            logger.warning("Invalid LLM decision: %s", e)
+            logger.warning(f"Invalid LLM decision: {e}")
             return ConsolidationResult(
                 operation=Operation.ADD,
                 new_content=fact,
@@ -273,10 +272,7 @@ Response:"""
 
         if operation in (Operation.UPDATE, Operation.DELETE):
             if not memory_id:
-                logger.warning(
-                    "%s without memory_id, defaulting to ADD",
-                    operation,
-                )
+                logger.warning(f"{operation} without memory_id, defaulting to ADD")
                 return ConsolidationResult(
                     operation=Operation.ADD,
                     new_content=fact,
@@ -285,10 +281,7 @@ Response:"""
 
             matching = [item for item, _ in candidates if item.id == memory_id]
             if not matching:
-                logger.warning(
-                    "Invalid memory_id %s, defaulting to ADD",
-                    memory_id,
-                )
+                logger.warning(f"Invalid memory_id {memory_id}, defaulting to ADD")
                 return ConsolidationResult(
                     operation=Operation.ADD,
                     new_content=fact,
@@ -331,10 +324,7 @@ Response:"""
                 Operation.DELETE,
             ):
                 if result.memory_id and result.memory_id not in valid_ids:
-                    logger.warning(
-                        "Invalid memory_id %s, falling back to ADD",
-                        result.memory_id,
-                    )
+                    logger.warning(f"Invalid memory_id {result.memory_id}, falling back to ADD")
                     result.operation = Operation.ADD
                     result.memory_id = None
 
@@ -351,7 +341,7 @@ Response:"""
                     namespace=namespace,
                 )
                 result.memory_id = item.id
-                logger.debug("Added: %s...", content[:50])
+                logger.debug(f"Added: {content[:50]}...")
 
             elif result.operation == Operation.UPDATE:
                 if not result.memory_id:
@@ -366,10 +356,7 @@ Response:"""
                     namespace=namespace,
                 )
                 if not updated:
-                    logger.info(
-                        "Memory %s not found, creating new",
-                        result.memory_id,
-                    )
+                    logger.info(f"Memory {result.memory_id} not found, creating new")
                     item = self.store.add(
                         content,
                         metadata=meta,
@@ -377,11 +364,7 @@ Response:"""
                     )
                     result.memory_id = item.id
                 else:
-                    logger.debug(
-                        "Updated %s: %s...",
-                        result.memory_id,
-                        content[:50],
-                    )
+                    logger.debug(f"Updated {result.memory_id}: {content[:50]}...")
 
             elif result.operation == Operation.DELETE:
                 if not result.memory_id:
@@ -390,12 +373,9 @@ Response:"""
 
                 deleted = self.store.delete(result.memory_id, namespace=namespace)
                 if not deleted:
-                    logger.warning(
-                        "Memory %s not found for DELETE",
-                        result.memory_id,
-                    )
+                    logger.warning(f"Memory {result.memory_id} not found for DELETE")
                 else:
-                    logger.debug("Deleted %s", result.memory_id)
+                    logger.debug(f"Deleted {result.memory_id}")
 
                 if result.new_content and result.new_content != result.old_content:
                     content = sanitize_for_memory(result.new_content)
@@ -404,20 +384,11 @@ Response:"""
                         metadata=meta,
                         namespace=namespace,
                     )
-                    logger.debug(
-                        "Added replacement: %s...",
-                        content[:50],
-                    )
+                    logger.debug(f"Added replacement: {content[:50]}...")
 
             elif result.operation == Operation.NOOP:
-                logger.debug(
-                    "Skipped duplicate: %s...",
-                    (result.new_content[:50] if result.new_content else "N/A"),
-                )
+                nc = result.new_content[:50] if result.new_content else "N/A"
+                logger.debug(f"Skipped duplicate: {nc}...")
 
         except Exception as e:
-            logger.error(
-                "Failed to execute %s: %s",
-                result.operation,
-                e,
-            )
+            logger.error(f"Failed to execute {result.operation}: {e}")

@@ -18,6 +18,8 @@ from nanobot.providers.base import LLMProvider
 
 if TYPE_CHECKING:
     from nanobot.config.schema import ExecToolConfig
+    from nanobot.registry.evolve import SelfEvolveManager
+    from nanobot.registry.store import AgentRegistry
 
 
 class SubagentManager:
@@ -37,6 +39,8 @@ class SubagentManager:
         model: str | None = None,
         brave_api_key: str | None = None,
         exec_config: "ExecToolConfig | None" = None,
+        registry: "AgentRegistry | None" = None,
+        evolve_manager: "SelfEvolveManager | None" = None,
     ):
         from nanobot.config.schema import ExecToolConfig
 
@@ -46,6 +50,8 @@ class SubagentManager:
         self.model = model or provider.get_default_model()
         self.brave_api_key = brave_api_key
         self.exec_config = exec_config or ExecToolConfig()
+        self._registry = registry
+        self._evolve_manager = evolve_manager
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def spawn(
@@ -54,6 +60,7 @@ class SubagentManager:
         label: str | None = None,
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
+        registry_task_id: str | None = None,
     ) -> str:
         """
         Spawn a subagent to execute a task in the background.
@@ -63,6 +70,7 @@ class SubagentManager:
             label: Optional human-readable label for the task.
             origin_channel: The channel to announce results to.
             origin_chat_id: The chat ID to announce results to.
+            registry_task_id: Optional task ID from the agent registry.
 
         Returns:
             Status message indicating the subagent was started.
@@ -76,7 +84,9 @@ class SubagentManager:
         }
 
         # Create background task
-        bg_task = asyncio.create_task(self._run_subagent(task_id, task, display_label, origin))
+        bg_task = asyncio.create_task(
+            self._run_subagent(task_id, task, display_label, origin, registry_task_id)
+        )
         self._running_tasks[task_id] = bg_task
 
         # Cleanup when done
@@ -91,9 +101,13 @@ class SubagentManager:
         task: str,
         label: str,
         origin: dict[str, str],
+        registry_task_id: str | None = None,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info(f"Subagent [{task_id}] starting task: {label}")
+
+        agent_id = f"subagent-{task_id}"
+        pulse_task: asyncio.Task | None = None
 
         try:
             # Build subagent tools (no message tool, no spawn tool)
@@ -111,8 +125,50 @@ class SubagentManager:
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             tools.register(WebFetchTool())
 
+            # Registry integration: handshake + proof tool + evolve tool
+            if self._registry and registry_task_id:
+                from nanobot.registry.handshake import AgentHandshake, HandshakeError
+                from nanobot.registry.store import AgentState, TaskState
+
+                # Perform handshake
+                handshake = AgentHandshake(self._registry, self.workspace)
+                try:
+                    await handshake.perform(
+                        agent_id=agent_id,
+                        task_id=registry_task_id,
+                        capabilities=["read_file", "write_file", "exec"],
+                        available_tool_names=list(tools.tool_names),
+                    )
+                except HandshakeError as e:
+                    logger.error(f"Subagent [{task_id}] handshake failed: {e}")
+                    await self._announce_result(
+                        task_id, label, task, f"Handshake failed: {e}", origin, "error"
+                    )
+                    return
+
+                # Transition task to IN_PROGRESS
+                await self._registry.update_task_state(
+                    registry_task_id, TaskState.IN_PROGRESS, reason="subagent started"
+                )
+
+                # Register proof tool
+                from nanobot.agent.tools.proof import SubmitProofTool
+
+                tools.register(SubmitProofTool(registry=self._registry, task_id=registry_task_id))
+
+                # Register evolve tool if available
+                if self._evolve_manager:
+                    from nanobot.agent.tools.evolve import SelfEvolveTool
+
+                    tools.register(SelfEvolveTool(self._evolve_manager))
+
+                # Start pulse loop
+                pulse_task = asyncio.create_task(self._pulse_loop(agent_id, interval=60))
+
             # Build messages with subagent-specific prompt
-            system_prompt = self._build_subagent_prompt(task)
+            system_prompt = self._build_subagent_prompt(
+                task, has_registry=bool(self._registry and registry_task_id)
+            )
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": task},
@@ -172,13 +228,73 @@ class SubagentManager:
             if final_result is None:
                 final_result = "Task completed but no final response was generated."
 
+            # Update registry state on completion
+            if self._registry and registry_task_id:
+                from nanobot.registry.store import AgentState
+
+                try:
+                    await self._registry.update_agent_state(
+                        agent_id, AgentState.COMPLETED, reason="task finished"
+                    )
+                except ValueError:
+                    pass  # May already be in a terminal state
+
             logger.info(f"Subagent [{task_id}] completed successfully")
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
             logger.error(f"Subagent [{task_id}] failed: {e}")
+
+            # Update registry state on failure
+            if self._registry and registry_task_id:
+                from nanobot.registry.store import AgentState, TaskState
+
+                try:
+                    await self._registry.update_agent_state(
+                        agent_id, AgentState.FAILED, reason=str(e)
+                    )
+                except ValueError:
+                    pass
+                try:
+                    await self._registry.update_task_state(
+                        registry_task_id, TaskState.FAILED, reason=str(e)
+                    )
+                except ValueError:
+                    pass
+
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
+
+        finally:
+            if pulse_task:
+                pulse_task.cancel()
+                try:
+                    await pulse_task
+                except asyncio.CancelledError:
+                    pass
+
+            # Transition agent back to IDLE for reuse
+            if self._registry:
+                try:
+                    agent = await self._registry.get_agent(agent_id)
+                    if agent and agent["state"] in ("completed", "failed"):
+                        from nanobot.registry.store import AgentState
+
+                        await self._registry.update_agent_state(
+                            agent_id, AgentState.IDLE, reason="cleanup"
+                        )
+                except (ValueError, Exception):
+                    pass
+
+    async def _pulse_loop(self, agent_id: str, interval: int = 60) -> None:
+        """Periodically record heartbeat pulses for the agent."""
+        while True:
+            await asyncio.sleep(interval)
+            if self._registry:
+                try:
+                    await self._registry.record_pulse(agent_id)
+                except Exception as e:
+                    logger.debug(f"Pulse failed for {agent_id}: {e}")
 
     async def _announce_result(
         self,
@@ -214,9 +330,9 @@ Summarize this naturally for the user. Keep it brief (1-2 sentences). Do not men
             f"Subagent [{task_id}] announced result to {origin['channel']}:{origin['chat_id']}"
         )
 
-    def _build_subagent_prompt(self, task: str) -> str:
+    def _build_subagent_prompt(self, task: str, has_registry: bool = False) -> str:
         """Build a focused system prompt for the subagent."""
-        return f"""# Subagent
+        base = f"""# Subagent
 
 You are a subagent spawned by the main agent to complete a specific task.
 
@@ -244,6 +360,31 @@ You are a subagent spawned by the main agent to complete a specific task.
 Your workspace is at: {self.workspace}
 
 When you have completed the task, provide a clear summary of your findings or actions."""
+
+        if has_registry:
+            base += """
+
+## Proof of Work
+After completing your task, you MUST submit proof using the submit_proof tool.
+Choose the appropriate proof type:
+- git: For code changes (branch, commit hash)
+- file: For file creation/modification (path, sha256 hash)
+- command: For shell commands (command, exit code)
+- test: For test results (passed/failed counts)
+- pr: For pull requests (PR URL, number, branch)
+
+## Self-Evolution (if available)
+If you have access to self_evolve, follow this workflow:
+1. setup_repo - Clone/pull the nanobot repo
+2. create_branch - Create a feature branch
+3. (Make changes using read_file/write_file on the repo)
+4. run_tests - Verify changes
+5. run_lint - Check code style
+6. commit_push - Commit and push changes
+7. create_pr - Create a pull request
+8. submit_proof with type=pr"""
+
+        return base
 
     def get_running_count(self) -> int:
         """Return the number of currently running subagents."""

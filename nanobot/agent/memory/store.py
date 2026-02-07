@@ -70,7 +70,7 @@ class EmbeddingService:
         try:
             return list(self._embed_cached(text))
         except Exception as e:
-            logger.error("Embedding failed: %s", e)
+            logger.error(f"Embedding failed: {e}")
             raise
 
     @property
@@ -214,12 +214,7 @@ class VectorMemoryStore:
         )
         self._conn.commit()
         self._prune_if_needed(namespace)
-        logger.debug(
-            "Added memory %s to namespace '%s': %s...",
-            memory_id,
-            namespace,
-            content[:50],
-        )
+        logger.debug(f"Added memory {memory_id} to namespace '{namespace}': {content[:50]}...")
         return MemoryItem(
             id=memory_id,
             content=content,
@@ -442,11 +437,7 @@ class VectorMemoryStore:
                     (memory_id, namespace),
                 )
             self._conn.commit()
-            logger.info(
-                "Pruned %d old memories from namespace '%s'",
-                len(ids_to_delete),
-                namespace,
-            )
+            logger.info(f"Pruned {len(ids_to_delete)} old memories from namespace '{namespace}'")
 
     def count(self, namespace: str | None = None) -> int:
         self._ensure_open()

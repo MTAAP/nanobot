@@ -129,6 +129,42 @@ class MemoryExtractionConfig(BaseModel):
     candidate_threshold: float = Field(default=0.7, alias="candidateThreshold")
 
 
+class RegistryConfig(BaseModel):
+    """Agent registry configuration for ACP."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    pulse_interval: int = Field(default=60, alias="pulseInterval")
+    stale_threshold: int = Field(default=180, alias="staleThreshold")
+    monitor_interval: int = Field(default=30, alias="monitorInterval")
+
+
+class SelfEvolveConfig(BaseModel):
+    """Self-evolution configuration for code modification via PRs."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    repo_url: str = Field(
+        default="https://github.com/MTAAP/nanobot.git",
+        alias="repoUrl",
+    )
+    auto_merge: bool = Field(default=False, alias="autoMerge")
+    protected_branches: list[str] = Field(
+        default_factory=lambda: ["main", "master"],
+        alias="protectedBranches",
+    )
+    test_command: str = Field(
+        default="pytest tests/ -v",
+        alias="testCommand",
+    )
+    lint_command: str = Field(
+        default="ruff check nanobot/ && ruff format --check nanobot/",
+        alias="lintCommand",
+    )
+
+
 class DaemonConfig(BaseModel):
     """Daemon mode: three-tier autonomous agent execution."""
 
@@ -143,6 +179,8 @@ class DaemonConfig(BaseModel):
     strategy_file: str = Field(default="HEARTBEAT.md", alias="strategyFile")
     max_iterations: int = Field(default=25, alias="maxIterations")
     cooldown_after_action: int = Field(default=600, alias="cooldownAfterAction")
+    registry: RegistryConfig = Field(default_factory=RegistryConfig, alias="registry")
+    self_evolve: SelfEvolveConfig = Field(default_factory=SelfEvolveConfig, alias="selfEvolve")
 
 
 class AgentDefaults(BaseModel):

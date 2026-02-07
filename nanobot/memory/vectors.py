@@ -112,6 +112,18 @@ class VectorStore:
                 if db_version < CURRENT_SCHEMA_VERSION:
                     self._run_migrations(conn, db_version)
 
+            # Defensive: ensure access tracking columns exist regardless of version.
+            # Handles edge cases where schema_version was set but ALTER failed.
+            cols = {r[1] for r in conn.execute("PRAGMA table_info(vectors)")}
+            if "access_count" not in cols:
+                conn.execute("ALTER TABLE vectors ADD COLUMN access_count INTEGER DEFAULT 0")
+                conn.commit()
+                logger.info("Added missing access_count column to vectors table")
+            if "last_accessed_at" not in cols:
+                conn.execute("ALTER TABLE vectors ADD COLUMN last_accessed_at TEXT")
+                conn.commit()
+                logger.info("Added missing last_accessed_at column to vectors table")
+
         # Set file permissions
         if self.db_path.exists():
             os.chmod(self.db_path, 0o600)

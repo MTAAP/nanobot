@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from nanobot.config.schema import (
         CompactionConfig,
         ContextConfig,
+        DaemonConfig,
         ExecToolConfig,
         MCPConfig,
         MemoryConfig,
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from nanobot.mcp import MCPManager
     from nanobot.memory.vectors import VectorStore
     from nanobot.providers.resolver import ProviderResolver
+    from nanobot.registry.store import AgentRegistry
     from nanobot.session.manager import Session
 
 
@@ -88,6 +90,8 @@ class AgentLoop:
         provider_resolver: "ProviderResolver | None" = None,
         memory_extraction: "MemoryExtractionConfig | None" = None,
         restrict_to_workspace: bool = False,
+        registry: "AgentRegistry | None" = None,
+        daemon_config: "DaemonConfig | None" = None,
     ):
         from nanobot.config.schema import (
             CompactionConfig,
@@ -146,6 +150,15 @@ class AgentLoop:
         self._enable_pre_compaction_flush = self._extraction_config.enable_pre_compaction_flush
         self._enable_tool_lessons = self._extraction_config.enable_tool_lessons
 
+        # Agent registry (ACP)
+        self._registry = registry
+        self._daemon_config = daemon_config
+
+        # Self-evolution manager
+        self._evolve_manager = None
+        if daemon_config and daemon_config.self_evolve.enabled and self._registry:
+            self._init_evolve_manager(daemon_config)
+
         self.subagents = SubagentManager(
             provider=provider,
             workspace=workspace,
@@ -153,6 +166,8 @@ class AgentLoop:
             model=self.model,
             brave_api_key=brave_api_key,
             exec_config=self.exec_config,
+            registry=self._registry,
+            evolve_manager=self._evolve_manager,
         )
 
         # MCP manager (initialized in run())
@@ -196,7 +211,7 @@ class AgentLoop:
         self.tools.register(message_tool)
 
         # Spawn tool (for subagents)
-        spawn_tool = SpawnTool(manager=self.subagents)
+        spawn_tool = SpawnTool(manager=self.subagents, registry=self._registry)
         self.tools.register(spawn_tool)
 
         # Tmux tool (persistent shell sessions)
@@ -223,6 +238,46 @@ class AgentLoop:
         from nanobot.agent.tools.mcp_install import InstallMCPServerTool
 
         self.tools.register(InstallMCPServerTool(workspace=self.workspace))
+
+        # Self-evolution tool (if enabled)
+        if self._evolve_manager:
+            from nanobot.agent.tools.evolve import SelfEvolveTool
+
+            self.tools.register(SelfEvolveTool(self._evolve_manager))
+            self.context.self_evolve_enabled = True
+
+    def _init_evolve_manager(self, daemon_config: "DaemonConfig") -> None:
+        """Initialize the self-evolution manager from config."""
+        evolve_cfg = daemon_config.self_evolve
+
+        # Extract GITHUB_TOKEN from MCP server config
+        github_token = None
+        if self.mcp_config and self.mcp_config.servers:
+            gh_server = self.mcp_config.servers.get("github")
+            if gh_server:
+                github_token = gh_server.env.get("GITHUB_TOKEN")
+
+        if not github_token:
+            import os
+
+            github_token = os.environ.get("GITHUB_TOKEN", "")
+
+        if not github_token:
+            logger.warning("Self-evolution enabled but no GITHUB_TOKEN found")
+            return
+
+        from nanobot.registry.evolve import SelfEvolveManager
+
+        self._evolve_manager = SelfEvolveManager(
+            workspace=self.workspace,
+            repo_url=evolve_cfg.repo_url,
+            github_token=github_token,
+            protected_branches=evolve_cfg.protected_branches,
+            test_command=evolve_cfg.test_command,
+            lint_command=evolve_cfg.lint_command,
+            auto_merge=evolve_cfg.auto_merge,
+        )
+        logger.info("Self-evolution manager initialized")
 
     def _resolve_subsystem_provider(self, provider_name: str | None) -> LLMProvider:
         """Resolve an LLM provider for a subsystem (compaction, extraction, etc.).
@@ -860,6 +915,9 @@ class AgentLoop:
             )
 
             content = (response.content or "").strip()
+            if not content:
+                logger.debug("Entity extraction returned empty response")
+                return
 
             # Handle markdown code blocks
             if content.startswith("```"):

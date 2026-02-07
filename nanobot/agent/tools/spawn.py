@@ -1,11 +1,13 @@
 """Spawn tool for creating background subagents."""
 
+import uuid
 from typing import TYPE_CHECKING, Any
 
 from nanobot.agent.tools.base import Tool
 
 if TYPE_CHECKING:
     from nanobot.agent.subagent import SubagentManager
+    from nanobot.registry.store import AgentRegistry
 
 
 class SpawnTool(Tool):
@@ -16,8 +18,13 @@ class SpawnTool(Tool):
     to the main agent when complete.
     """
 
-    def __init__(self, manager: "SubagentManager"):
+    def __init__(
+        self,
+        manager: "SubagentManager",
+        registry: "AgentRegistry | None" = None,
+    ):
         self._manager = manager
+        self._registry = registry
         self._origin_channel = "cli"
         self._origin_chat_id = "direct"
 
@@ -57,9 +64,25 @@ class SpawnTool(Tool):
 
     async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
+        registry_task_id: str | None = None
+
+        # If registry is enabled, create a task before spawning
+        if self._registry:
+            try:
+                registry_task_id = str(uuid.uuid4())[:8]
+                await self._registry.create_task(
+                    task_id=registry_task_id,
+                    description=task[:500],
+                    priority="medium",
+                    complexity="complex",
+                )
+            except Exception:
+                registry_task_id = None  # Fall back to non-registry spawn
+
         return await self._manager.spawn(
             task=task,
             label=label,
             origin_channel=self._origin_channel,
             origin_chat_id=self._origin_chat_id,
+            registry_task_id=registry_task_id,
         )

@@ -205,6 +205,16 @@ def gateway(
     cron_store_path = get_data_dir() / "cron" / "jobs.json"
     cron = CronService(cron_store_path, on_job=None)
 
+    # Create agent registry if enabled
+    daemon_cfg = config.agents.defaults.daemon
+    registry = None
+    registry_cfg = daemon_cfg.registry
+    if registry_cfg.enabled:
+        from nanobot.registry.store import AgentRegistry
+
+        registry = AgentRegistry(config.workspace_path)
+        console.print("[green]>[/green] Agent registry enabled")
+
     # Create agent with channel manager and cron service
     agent = AgentLoop(
         bus=bus,
@@ -223,6 +233,8 @@ def gateway(
         provider_resolver=resolver,
         memory_extraction=config.agents.defaults.memory_extraction,
         restrict_to_workspace=config.tools.restrict_to_workspace,
+        registry=registry,
+        daemon_config=daemon_cfg,
     )
 
     # Set the cron callback using agent's process_direct
@@ -250,9 +262,7 @@ def gateway(
 
     cron.on_job = on_cron_job
 
-    # Create heartbeat / daemon service
-    daemon_cfg = config.agents.defaults.daemon
-
+    # Create heartbeat / daemon service (daemon_cfg already created above)
     triage_provider = None
     triage_model = None
     if daemon_cfg.triage_model and daemon_cfg.triage_provider:
@@ -269,6 +279,31 @@ def gateway(
         """Execute heartbeat through the agent."""
         return await agent.process_direct(prompt, session_key="daemon")
 
+    # Registry callbacks
+    async def on_daemon_notify(message: str) -> None:
+        """Post daemon notification to Discord default channel."""
+        from nanobot.bus.events import OutboundMessage
+
+        discord_cfg = config.channels.discord
+        if discord_cfg.enabled and discord_cfg.default_channel_id:
+            await bus.publish_outbound(
+                OutboundMessage(
+                    channel="discord",
+                    chat_id=discord_cfg.default_channel_id,
+                    content=message,
+                )
+            )
+
+    async def on_daemon_spawn(task_description: str, task_id: str) -> str:
+        """Spawn a subagent for a complex daemon task."""
+        return await agent.subagents.spawn(
+            task=task_description,
+            label=f"daemon-{task_id}",
+            origin_channel="discord",
+            origin_chat_id=config.channels.discord.default_channel_id or "direct",
+            registry_task_id=task_id,
+        )
+
     heartbeat = HeartbeatService(
         workspace=config.workspace_path,
         on_heartbeat=on_heartbeat,
@@ -280,6 +315,10 @@ def gateway(
         strategy_file=daemon_cfg.strategy_file,
         max_iterations=daemon_cfg.max_iterations,
         cooldown_after_action=daemon_cfg.cooldown_after_action,
+        registry=registry,
+        registry_config=registry_cfg if registry else None,
+        on_notify=on_daemon_notify if registry else None,
+        on_spawn=on_daemon_spawn if registry else None,
     )
 
     if channels.enabled_channels:
@@ -298,6 +337,9 @@ def gateway(
         )
     else:
         console.print(f"[green]✓[/green] Heartbeat: every {daemon_cfg.interval}s")
+
+    if daemon_cfg.self_evolve.enabled:
+        console.print("[green]>[/green] Self-evolution enabled")
 
     async def run():
         try:

@@ -4,12 +4,16 @@ import asyncio
 import json
 import tempfile
 import time
+import uuid
 from pathlib import Path
-from typing import Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from loguru import logger
 
 from nanobot.providers.base import LLMProvider
+
+if TYPE_CHECKING:
+    from nanobot.registry.store import AgentRegistry
 
 # Default interval: 30 minutes
 DEFAULT_HEARTBEAT_INTERVAL_S = 30 * 60
@@ -36,11 +40,12 @@ agent should act.
 {tmux_sessions}
 
 Respond with JSON only: {{"act": true/false, "reason": "...", \
-"priority": "low/medium/high"}}
+"priority": "low/medium/high", "complexity": "simple/complex"}}
 Rules:
 - act=true only if there are clear, actionable tasks
 - Checked/completed items (- [x]) are NOT actionable
-- Empty/missing strategy file means act=false"""
+- Empty/missing strategy file means act=false
+- complexity=simple for quick tasks (< 5 min), complex for longer tasks"""
 
 EXECUTION_PROMPT_TEMPLATE = """\
 [Daemon Mode - Priority: {priority}]
@@ -101,6 +106,10 @@ class HeartbeatService:
         strategy_file: str = "HEARTBEAT.md",
         max_iterations: int = 25,
         cooldown_after_action: int = 600,
+        registry: "AgentRegistry | None" = None,
+        registry_config: Any = None,
+        on_notify: Callable[[str], Coroutine[Any, Any, None]] | None = None,
+        on_spawn: Callable[[str, str], Coroutine[Any, Any, str]] | None = None,
     ):
         self.workspace = workspace
         self.on_heartbeat = on_heartbeat
@@ -118,6 +127,13 @@ class HeartbeatService:
         self._cooldown_s = cooldown_after_action
         self._last_action_time: float = 0
         self._daemon_mode = triage_provider is not None
+
+        # Registry params
+        self._registry = registry
+        self._registry_config = registry_config
+        self._on_notify = on_notify
+        self._on_spawn = on_spawn
+        self._monitor_task: asyncio.Task | None = None
 
     @property
     def heartbeat_file(self) -> Path:
@@ -143,12 +159,21 @@ class HeartbeatService:
         mode = "daemon" if self._daemon_mode else "legacy"
         logger.info(f"Heartbeat started (every {self.interval_s}s, mode={mode})")
 
+        # Start registry monitor if registry is enabled
+        if self._registry and self._registry_config:
+            interval = getattr(self._registry_config, "monitor_interval", 30)
+            self._monitor_task = asyncio.create_task(self._run_monitor_loop(interval))
+            logger.info(f"Registry monitor started (every {interval}s)")
+
     def stop(self) -> None:
         """Stop the heartbeat service."""
         self._running = False
         if self._task:
             self._task.cancel()
             self._task = None
+        if self._monitor_task:
+            self._monitor_task.cancel()
+            self._monitor_task = None
 
     async def _run_loop(self) -> None:
         """Main heartbeat loop."""
@@ -280,6 +305,7 @@ class HeartbeatService:
                 "act": bool(result.get("act", False)),
                 "reason": str(result.get("reason", "")),
                 "priority": str(result.get("priority", "low")),
+                "complexity": str(result.get("complexity", "simple")),
             }
         except Exception as e:
             logger.warning(f"Tier 1: triage failed: {e}")
@@ -290,16 +316,37 @@ class HeartbeatService:
         context: dict[str, Any],
         triage: dict[str, Any],
     ) -> None:
-        """Tier 2: Execute action via the main agent loop."""
+        """Tier 2: Execute action via the main agent loop or spawn subagent."""
         elapsed = time.time() - self._last_action_time
         if elapsed < self._cooldown_s:
             remaining = int(self._cooldown_s - elapsed)
             logger.info(f"Tier 2: cooldown active, {remaining}s remaining")
             return
 
+        complexity = triage.get("complexity", "simple")
+        reason = triage.get("reason", "")
+
+        # Hybrid dispatch: complex tasks go to subagent via registry
+        if complexity == "complex" and self._registry and self._on_spawn:
+            try:
+                task_id = str(uuid.uuid4())[:8]
+                await self._registry.create_task(
+                    task_id=task_id,
+                    description=reason,
+                    priority=triage.get("priority", "medium"),
+                    complexity="complex",
+                )
+                await self._on_spawn(reason, task_id)
+                self._last_action_time = time.time()
+                logger.info(f"Tier 2: spawned subagent for complex task {task_id}")
+                return
+            except Exception as e:
+                logger.warning(f"Tier 2: spawn failed, falling back to direct: {e}")
+
+        # Simple tasks or fallback: direct execution
         prompt = EXECUTION_PROMPT_TEMPLATE.format(
             priority=triage.get("priority", "low"),
-            reason=triage.get("reason", ""),
+            reason=reason,
             strategy_content=(context["strategy_content"] or "No strategy file."),
             git_status=context["git_status"] or "N/A",
             tmux_sessions=context["tmux_sessions"] or "No active sessions.",
@@ -348,3 +395,121 @@ class HeartbeatService:
         if self.on_heartbeat:
             return await self.on_heartbeat(HEARTBEAT_PROMPT)
         return None
+
+    # ------------------------------------------------------------------
+    # Registry monitor loop
+    # ------------------------------------------------------------------
+
+    async def _run_monitor_loop(self, interval: int = 30) -> None:
+        """Periodic background loop for registry health monitoring."""
+        while self._running:
+            try:
+                await asyncio.sleep(interval)
+                if self._running and self._registry:
+                    await self._monitor_registry()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Registry monitor error: {e}")
+
+    async def _monitor_registry(self) -> None:
+        """Run registry health checks: stale agents, PoW verification."""
+        if not self._registry:
+            return
+
+        # Mark stale agents as FAILED
+        threshold = 180
+        if self._registry_config:
+            threshold = getattr(self._registry_config, "stale_threshold", 180)
+
+        stale_ids = await self._registry.mark_stale_agents(threshold)
+
+        # Requeue tasks from stale agents
+        if stale_ids:
+            from nanobot.registry.store import TaskState
+
+            for agent in stale_ids:
+                agent_data = await self._registry.get_agent(agent)
+                if agent_data and agent_data.get("task_id"):
+                    task_id = agent_data["task_id"]
+                    task = await self._registry.get_task(task_id)
+                    if task and task["state"] not in (
+                        TaskState.COMPLETED.value,
+                        TaskState.PENDING.value,
+                    ):
+                        try:
+                            await self._registry.update_task_state(
+                                task_id,
+                                TaskState.FAILED,
+                                reason=f"agent {agent} went stale",
+                            )
+                        except ValueError:
+                            pass
+
+        # Verify proof of work for tasks in VERIFYING state
+        await self._verify_proof_of_work()
+
+    async def _verify_proof_of_work(self) -> None:
+        """Verify PoW for tasks in VERIFYING state."""
+        if not self._registry:
+            return
+
+        from nanobot.registry.proof import ProofOfWork, ProofVerifier
+        from nanobot.registry.store import TaskState
+
+        tasks = await self._registry.get_verifying_tasks()
+        if not tasks:
+            return
+
+        verifier = ProofVerifier(self.workspace)
+
+        for task in tasks:
+            task_id = task["task_id"]
+            proof_data = task.get("proof_of_work")
+
+            if not proof_data:
+                # No proof submitted yet, mark as failed
+                try:
+                    await self._registry.update_task_state(
+                        task_id, TaskState.FAILED, reason="no proof submitted"
+                    )
+                except ValueError:
+                    pass
+                await self._notify_human(task, "Task verification failed: no proof submitted")
+                continue
+
+            try:
+                proof = ProofOfWork.from_json(
+                    json.dumps(proof_data) if isinstance(proof_data, dict) else proof_data
+                )
+                result = await verifier.verify(proof)
+
+                if result["valid"]:
+                    await self._registry.update_task_state(
+                        task_id,
+                        TaskState.COMPLETED,
+                        reason=f"verified {result['verified_count']} proofs",
+                    )
+                    desc = task.get("description", "")[:100]
+                    await self._notify_human(task, f"Task completed and verified: {desc}")
+                else:
+                    details = "; ".join(
+                        f.get("error", "unknown") for f in result.get("failed_items", [])
+                    )
+                    await self._registry.update_task_state(
+                        task_id,
+                        TaskState.FAILED,
+                        reason=f"verification failed: {details}",
+                    )
+                    await self._notify_human(task, f"Task verification failed: {details}")
+            except Exception as e:
+                logger.warning(f"PoW verification error for task {task_id}: {e}")
+
+    async def _notify_human(self, task: dict[str, Any], message: str) -> None:
+        """Send notification via the on_notify callback."""
+        if self._on_notify:
+            try:
+                full_msg = f"[Agent Registry] {message}"
+                await self._on_notify(full_msg)
+            except Exception as e:
+                logger.warning(f"Notification failed: {e}")

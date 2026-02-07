@@ -250,7 +250,7 @@ class MemoryExtractor:
         if user_messages:
             last_msg = user_messages[-1].get("content", "").strip()
             if not last_msg or any(p.match(last_msg) for p in self._trivial_patterns):
-                logger.debug("Skipping trivial message: %s", last_msg[:50])
+                logger.debug(f"Skipping trivial message: {last_msg[:50]}")
                 return []
 
         conversation = self._format_conversation(messages)
@@ -266,24 +266,20 @@ class MemoryExtractor:
                 t = getattr(f, "fact_type", "generic")
                 self._last_metrics.facts_by_type[t] = self._last_metrics.facts_by_type.get(t, 0) + 1
             logger.info(
-                "extraction_complete facts=%d by_type=%s",
-                len(facts),
-                dict(self._last_metrics.facts_by_type),
+                f"extraction_complete facts={len(facts)} "
+                f"by_type={dict(self._last_metrics.facts_by_type)}"
             )
             return facts
         except Exception as e:
             self._last_metrics.llm_failures += 1
             self._last_metrics.heuristic_fallbacks += 1
-            logger.warning("LLM extraction failed: %s", e)
+            logger.warning(f"LLM extraction failed: {e}")
             facts = self._heuristic_extract(messages)[:max_facts]
             self._last_metrics.facts_extracted = len(facts)
             for f in facts:
                 t = getattr(f, "fact_type", "generic")
                 self._last_metrics.facts_by_type[t] = self._last_metrics.facts_by_type.get(t, 0) + 1
-            logger.info(
-                "extraction_complete method=heuristic facts=%d",
-                len(facts),
-            )
+            logger.info(f"extraction_complete method=heuristic facts={len(facts)}")
             return facts
 
     async def extract_lessons(
@@ -353,7 +349,7 @@ class MemoryExtractor:
                     source = "llm_lesson"
                     meta = {"category": generalized.category}
             except Exception as e:
-                logger.debug("LLM lesson extraction failed: %s", e)
+                logger.debug(f"LLM lesson extraction failed: {e}")
 
             if not lesson_content:
                 lesson_content = self._normalize_lesson(content.strip()[:500])
@@ -441,10 +437,10 @@ class MemoryExtractor:
                     )
             return out
         except json.JSONDecodeError as e:
-            logger.warning("Pre-compaction JSON failed: %s", e)
+            logger.warning(f"Pre-compaction JSON failed: {e}")
             return []
         except Exception as e:
-            logger.warning("Pre-compaction extraction failed: %s", e)
+            logger.warning(f"Pre-compaction extraction failed: {e}")
             return []
 
     def extract_tool_lessons(
@@ -693,14 +689,14 @@ class MemoryExtractor:
                         )
                     )
                 except ValidationError as ve:
-                    logger.debug("Fact validation skipped: %s", ve)
+                    logger.debug(f"Fact validation skipped: {ve}")
                     continue
             return extracted
         except json.JSONDecodeError as e:
-            logger.warning("LLM extraction JSON decode failed: %s", e)
+            logger.warning(f"LLM extraction JSON decode failed: {e}")
             return []
         except ValueError as e:
-            logger.warning("LLM extraction validation failed: %s", e)
+            logger.warning(f"LLM extraction validation failed: {e}")
             return []
 
     def _heuristic_extract(self, messages: list[dict[str, Any]]) -> list[ExtractedFact]:
