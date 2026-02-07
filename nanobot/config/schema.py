@@ -109,6 +109,7 @@ class MemoryConfig(BaseModel):
     enable_entities: bool = Field(default=True, alias="enableEntities")
     enable_consolidation: bool = Field(default=True, alias="enableConsolidation")
     enable_proactive: bool = Field(default=False, alias="enableProactive")
+    deterministic_recall: bool = Field(default=True, alias="deterministicRecall")
     entities_db_path: str = Field(default="~/.nanobot/memory/entities.db", alias="entitiesDbPath")
 
 
@@ -179,6 +180,9 @@ class DaemonConfig(BaseModel):
     strategy_file: str = Field(default="HEARTBEAT.md", alias="strategyFile")
     max_iterations: int = Field(default=25, alias="maxIterations")
     cooldown_after_action: int = Field(default=600, alias="cooldownAfterAction")
+    cooldown_high: int = Field(default=60, alias="cooldownHigh")
+    cooldown_medium: int = Field(default=300, alias="cooldownMedium")
+    cooldown_low: int = Field(default=600, alias="cooldownLow")
     registry: RegistryConfig = Field(default_factory=RegistryConfig, alias="registry")
     self_evolve: SelfEvolveConfig = Field(default_factory=SelfEvolveConfig, alias="selfEvolve")
 
@@ -193,6 +197,7 @@ class AgentDefaults(BaseModel):
     provider: str | None = None  # Named provider from providers section
     max_tokens: int = 8192
     temperature: float = 0.7
+    tool_temperature: float = Field(default=0.0, alias="toolTemperature")
     max_tool_iterations: int = 20
     context: ContextConfig = Field(default_factory=ContextConfig)
     compaction: CompactionConfig = Field(default_factory=CompactionConfig)

@@ -338,8 +338,9 @@ class VectorStore:
         Returns:
             List of matching entries with similarity scores.
         """
+        _default_type_weights = {"fact": 1.2, "conversation": 1.0}
         if type_weights is None:
-            type_weights = {"fact": 1.2, "conversation": 1.0}
+            type_weights = _default_type_weights
 
         # Check embedding cache
         cached = self._get_cached_embedding(query)

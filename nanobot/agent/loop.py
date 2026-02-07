@@ -92,6 +92,8 @@ class AgentLoop:
         restrict_to_workspace: bool = False,
         registry: "AgentRegistry | None" = None,
         daemon_config: "DaemonConfig | None" = None,
+        temperature: float = 0.7,
+        tool_temperature: float = 0.0,
     ):
         from nanobot.config.schema import (
             CompactionConfig,
@@ -107,6 +109,8 @@ class AgentLoop:
         self.model = model or provider.get_default_model()
         self.max_iterations = max_iterations
         self.brave_api_key = brave_api_key
+        self.temperature = temperature
+        self.tool_temperature = tool_temperature
         self.exec_config = exec_config or ExecToolConfig()
         self.channel_manager = channel_manager
         self.cron_service = cron_service
@@ -179,6 +183,10 @@ class AgentLoop:
         # Serializes daemon execution with user message processing
         self._processing_lock = asyncio.Lock()
 
+        # Tool failure reflexion: track consecutive failures per tool
+        self._tool_failure_counts: dict[str, int] = {}
+        self._tool_failure_threshold = 3
+
         self._running = False
         self._register_default_tools()
 
@@ -238,6 +246,13 @@ class AgentLoop:
         from nanobot.agent.tools.mcp_install import InstallMCPServerTool
 
         self.tools.register(InstallMCPServerTool(workspace=self.workspace))
+
+        # Follow-up tracking tool
+        from nanobot.agent.tools.followup import FollowUpTool
+
+        self.tools.register(
+            FollowUpTool(db_path=Path.home() / ".nanobot" / "data" / "followups.db")
+        )
 
         # Self-evolution tool (if enabled)
         if self._evolve_manager:
@@ -330,6 +345,33 @@ class AgentLoop:
 
         logger.debug(f"Truncating tool result from {current_tokens} to {max_tokens} tokens")
         return truncate_to_token_limit(result, max_tokens)
+
+    def _record_tool_lesson(
+        self,
+        tool_name: str,
+        arguments: dict,
+        error: str,
+        count: int,
+    ) -> None:
+        """Record a tool failure lesson to TOOLS.md for daemon review."""
+        import time as _time
+
+        lesson = (
+            f"\n\n## [LESSON] {tool_name} - "
+            f"Repeated failure ({count} times)\n"
+            f"Arguments pattern: {json.dumps(arguments)[:200]}\n"
+            f"Error: {error[:300]}\n"
+            f"Recorded: {_time.strftime('%Y-%m-%d %H:%M')}\n"
+        )
+        tools_md = self.workspace / "TOOLS.md"
+        try:
+            existing = ""
+            if tools_md.exists():
+                existing = tools_md.read_text(encoding="utf-8")
+            tools_md.write_text(existing + lesson, encoding="utf-8")
+            logger.info(f"Recorded tool lesson for '{tool_name}' after {count} failures")
+        except Exception as e:
+            logger.warning(f"Failed to record tool lesson: {e}")
 
     def _check_context_budget(self, messages: list[dict]) -> None:
         """Log warnings if approaching context limits."""
@@ -480,6 +522,10 @@ class AgentLoop:
 
         logger.info(f"Processing message from {msg.channel}:{msg.sender_id}")
 
+        # Notify heartbeat of user activity for dynamic intervals
+        if hasattr(self, "_heartbeat") and self._heartbeat:
+            self._heartbeat.notify_user_activity()
+
         # Get or create session
         session = self.sessions.get_or_create(msg.session_key)
 
@@ -505,6 +551,13 @@ class AgentLoop:
         mcp_install_tool = self.tools.get("install_mcp_server")
         if isinstance(mcp_install_tool, InstallMCPServerTool):
             mcp_install_tool.set_context(msg.channel, msg.chat_id)
+
+        # Update follow-up tool context
+        from nanobot.agent.tools.followup import FollowUpTool
+
+        followup_tool = self.tools.get("follow_up")
+        if isinstance(followup_tool, FollowUpTool):
+            followup_tool.set_context(msg.channel, msg.chat_id)
 
         # Extract channel context from metadata (e.g., Discord channel history)
         channel_context = msg.metadata.get("channel_context", "") if msg.metadata else ""
@@ -539,9 +592,14 @@ class AgentLoop:
             # Check context budget before LLM call
             self._check_context_budget(messages)
 
-            # Call LLM
+            # Call LLM — use low temperature for tool-calling determinism
+            tool_defs = self.tools.get_definitions()
+            current_temp = self.tool_temperature if tool_defs else self.temperature
             response = await self.provider.chat(
-                messages=messages, tools=self.tools.get_definitions(), model=self.model
+                messages=messages,
+                tools=tool_defs,
+                model=self.model,
+                temperature=current_temp,
             )
 
             # Handle tool calls
@@ -562,12 +620,42 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts
                 )
 
-                # Execute tools
+                # Execute tools with validation
                 for tool_call in response.tool_calls:
-                    args_str = json.dumps(tool_call.arguments)
-                    logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
-                    result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    # Truncate large tool results to fit within budget
+                    tool = self.tools.get(tool_call.name)
+                    if not tool:
+                        result = f"Error: unknown tool '{tool_call.name}'"
+                        logger.warning(f"LLM called unknown tool: {tool_call.name}")
+                    else:
+                        errors = tool.validate_params(tool_call.arguments)
+                        if errors:
+                            result = (
+                                f"Error: invalid arguments for "
+                                f"{tool_call.name} - {'; '.join(errors)}"
+                            )
+                            logger.warning(f"Tool validation failed: {tool_call.name} - {errors}")
+                        else:
+                            args_str = json.dumps(tool_call.arguments)
+                            logger.debug(
+                                f"Executing tool: {tool_call.name} with arguments: {args_str}"
+                            )
+                            result = await self.tools.execute(tool_call.name, tool_call.arguments)
+
+                    # Reflexion: track consecutive tool failures
+                    if isinstance(result, str) and result.startswith("Error"):
+                        count = self._tool_failure_counts.get(tool_call.name, 0) + 1
+                        self._tool_failure_counts[tool_call.name] = count
+                        if count >= self._tool_failure_threshold:
+                            self._record_tool_lesson(
+                                tool_call.name,
+                                tool_call.arguments,
+                                result,
+                                count,
+                            )
+                            self._tool_failure_counts[tool_call.name] = 0
+                    else:
+                        self._tool_failure_counts.pop(tool_call.name, None)
+
                     result = self._truncate_tool_result(result)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
@@ -704,19 +792,41 @@ class AgentLoop:
             channel=origin_channel, chat_id=origin_chat_id, content=final_content
         )
 
-    async def process_direct(self, content: str, session_key: str = "cli:direct") -> str:
+    async def process_direct(
+        self,
+        content: str,
+        session_key: str = "cli:direct",
+        channel: str | None = None,
+        chat_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
         """
-        Process a message directly (for CLI usage).
+        Process a message directly (for CLI, cron, and daemon usage).
 
         Args:
             content: The message content.
-            session_key: Session identifier.
+            session_key: Session identifier (format: "channel:chat_id").
+            channel: Explicit channel name. Parsed from session_key if omitted.
+            chat_id: Explicit chat ID. Parsed from session_key if omitted.
+            metadata: Optional metadata to attach (e.g., for channel context).
 
         Returns:
             The agent's response.
         """
-        msg = InboundMessage(channel="cli", sender_id="user", chat_id="direct", content=content)
+        if channel and chat_id:
+            ch, cid = channel, chat_id
+        elif ":" in session_key:
+            ch, cid = session_key.split(":", 1)
+        else:
+            ch, cid = "cli", session_key
 
+        msg = InboundMessage(
+            channel=ch,
+            sender_id="system",
+            chat_id=cid,
+            content=content,
+            metadata=metadata or {},
+        )
         response = await self._process_message(msg)
         return response.content if response else ""
 
@@ -739,13 +849,23 @@ class AgentLoop:
         try:
             memory_context: list[str] = []
 
-            results = await self.vector_store.search(
-                query=user_message,
-                top_k=self.memory_config.search_top_k,
-                min_similarity=self.memory_config.min_similarity,
-                recency_weight=self.memory_config.recency_weight,
-                type_weights={"fact": 1.2, "conversation": 1.0},
-            )
+            # Deterministic recall: pure similarity, no time decay or type bias
+            if self.memory_config.deterministic_recall:
+                results = await self.vector_store.search(
+                    query=user_message,
+                    top_k=self.memory_config.search_top_k,
+                    min_similarity=self.memory_config.min_similarity,
+                    recency_weight=0.0,
+                    type_weights={},
+                )
+            else:
+                results = await self.vector_store.search(
+                    query=user_message,
+                    top_k=self.memory_config.search_top_k,
+                    min_similarity=self.memory_config.min_similarity,
+                    recency_weight=self.memory_config.recency_weight,
+                    type_weights={"fact": 1.2, "conversation": 1.0},
+                )
 
             if results:
                 memory_context.append("[Relevant memories from past conversations]")

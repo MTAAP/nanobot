@@ -107,20 +107,64 @@ class SelfEvolveTool(Tool):
                 if not message:
                     return "Error: commit_message is required for commit_push"
                 files = kwargs.get("files")
+
+                # Verify actual file changes exist before commit
+                repo_path = self._manager._repo_path
+                unstaged = await self._manager._run_git(["diff", "--stat"], cwd=repo_path)
+                staged = await self._manager._run_git(["diff", "--cached", "--stat"], cwd=repo_path)
+                untracked = await self._manager._run_git(
+                    ["ls-files", "--others", "--exclude-standard"],
+                    cwd=repo_path,
+                )
+                if not unstaged.strip() and not staged.strip() and not untracked.strip():
+                    return (
+                        "Error: no file changes detected. "
+                        "Use write_file or edit_file to make "
+                        "changes before committing."
+                    )
+
                 result = await self._manager.commit_and_push(message, files)
                 if not result["ok"]:
                     return f"Error: {result.get('error', 'push failed')}"
-                return f"Pushed commit {result['commit_sha'][:8]} to branch {result['branch']}"
+
+                # Include diff stats in success response
+                diff_stats = await self._manager._run_git(
+                    ["diff", "--stat", "HEAD~1..HEAD"],
+                    cwd=repo_path,
+                )
+                return (
+                    f"Pushed commit {result['commit_sha'][:8]} "
+                    f"to branch {result['branch']}\n"
+                    f"Changes:\n{diff_stats.strip()}"
+                )
 
             elif action == "create_pr":
                 title = kwargs.get("pr_title")
                 body = kwargs.get("pr_body", "")
                 if not title:
                     return "Error: pr_title is required for create_pr"
+
+                # Verify commits ahead of main before creating PR
+                repo_path = self._manager._repo_path
+                commits_ahead = await self._manager._run_git(
+                    ["log", "main..HEAD", "--oneline"],
+                    cwd=repo_path,
+                )
+                if not commits_ahead.strip():
+                    return (
+                        "Error: no commits ahead of main. "
+                        "Use commit_push first to create commits "
+                        "before opening a PR."
+                    )
+
                 result = await self._manager.create_pull_request(title, body)
                 if not result["ok"]:
                     return f"Error creating PR: {result.get('error')}"
-                return f"PR #{result['pr_number']} created: {result['pr_url']}"
+                return (
+                    f"PR #{result['pr_number']} created: "
+                    f"{result['pr_url']}\n"
+                    f"Commits:\n{commits_ahead.strip()}"
+                )
 
             elif action == "status":
                 repo_path = await self._manager.get_repo_path()

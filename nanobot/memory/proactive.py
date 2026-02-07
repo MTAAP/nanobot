@@ -9,6 +9,7 @@ from typing import Any
 
 from loguru import logger
 
+from nanobot.utils.atomic import atomic_write_json
 from nanobot.utils.helpers import ensure_dir
 
 
@@ -267,10 +268,7 @@ class ProactiveMemory:
     def _save_patterns(self, patterns: dict[str, list[dict[str, str]]]) -> None:
         """Save patterns to the JSON file."""
         try:
-            self._patterns_path.write_text(
-                json.dumps(patterns, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            atomic_write_json(self._patterns_path, patterns)
         except OSError as e:
             logger.error(f"Failed to save patterns: {e}")
 
@@ -294,9 +292,6 @@ class ProactiveMemory:
     def _save_dismissed(self, dismissed: set[str]) -> None:
         """Save dismissed reminder hashes to disk."""
         try:
-            self._dismissed_path.write_text(
-                json.dumps(sorted(dismissed), ensure_ascii=False),
-                encoding="utf-8",
-            )
+            atomic_write_json(self._dismissed_path, sorted(dismissed), indent=0)
         except OSError as e:
             logger.error(f"Failed to save dismissed reminders: {e}")

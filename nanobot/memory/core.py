@@ -5,6 +5,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from nanobot.utils.atomic import atomic_write_json
 from nanobot.utils.helpers import ensure_dir
 
 # Maximum total characters across all sections
@@ -65,10 +66,7 @@ class CoreMemory:
     def _save(self) -> None:
         """Persist core memory to disk."""
         try:
-            self.store_path.write_text(
-                json.dumps(self._data, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
+            atomic_write_json(self.store_path, self._data)
         except OSError as e:
             logger.error(f"Failed to save core memory: {e}")
 

@@ -235,29 +235,37 @@ def gateway(
         restrict_to_workspace=config.tools.restrict_to_workspace,
         registry=registry,
         daemon_config=daemon_cfg,
+        temperature=config.agents.defaults.temperature,
+        tool_temperature=config.agents.defaults.tool_temperature,
     )
 
     # Set the cron callback using agent's process_direct
     async def on_cron_job(job: CronJob) -> str | None:
         """Execute a cron job through the agent."""
-        response = await agent.process_direct(job.payload.message, session_key=f"cron:{job.id}")
-        # Optionally deliver to channel
-        if job.payload.deliver and job.payload.to:
-            target_channel = job.payload.channel
-            if not target_channel:
-                logger.warning(
-                    f"Cron job '{job.name}' has deliver=True but no channel set, skipping delivery"
-                )
-            else:
-                from nanobot.bus.events import OutboundMessage
+        # Use delivery target as channel context so tools resolve correctly
+        ch = job.payload.channel or "cron"
+        cid = job.payload.to or job.id
+        response = await agent.process_direct(
+            job.payload.message,
+            session_key=f"cron:{job.id}",
+            channel=ch,
+            chat_id=cid,
+        )
+        # Deliver response to channel if requested
+        if job.payload.deliver and job.payload.to and job.payload.channel:
+            from nanobot.bus.events import OutboundMessage
 
-                await bus.publish_outbound(
-                    OutboundMessage(
-                        channel=target_channel,
-                        chat_id=job.payload.to,
-                        content=response or "",
-                    )
+            await bus.publish_outbound(
+                OutboundMessage(
+                    channel=job.payload.channel,
+                    chat_id=job.payload.to,
+                    content=response or "",
                 )
+            )
+        elif job.payload.deliver:
+            logger.warning(
+                f"Cron job '{job.name}' has deliver=True but missing channel/to, skipping delivery"
+            )
         return response
 
     cron.on_job = on_cron_job
@@ -276,8 +284,13 @@ def gateway(
             triage_model = daemon_cfg.triage_model
 
     async def on_heartbeat(prompt: str) -> str:
-        """Execute heartbeat through the agent."""
-        return await agent.process_direct(prompt, session_key="daemon")
+        """Execute heartbeat through the agent with isolated session."""
+        return await agent.process_direct(
+            prompt,
+            session_key="daemon:heartbeat",
+            channel="daemon",
+            chat_id="heartbeat",
+        )
 
     # Registry callbacks
     async def on_daemon_notify(message: str) -> None:
@@ -315,11 +328,16 @@ def gateway(
         strategy_file=daemon_cfg.strategy_file,
         max_iterations=daemon_cfg.max_iterations,
         cooldown_after_action=daemon_cfg.cooldown_after_action,
+        cooldown_high=daemon_cfg.cooldown_high,
+        cooldown_medium=daemon_cfg.cooldown_medium,
+        cooldown_low=daemon_cfg.cooldown_low,
         registry=registry,
         registry_config=registry_cfg if registry else None,
         on_notify=on_daemon_notify if registry else None,
         on_spawn=on_daemon_spawn if registry else None,
     )
+    # Enable dynamic interval awareness in agent loop
+    agent._heartbeat = heartbeat
 
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")

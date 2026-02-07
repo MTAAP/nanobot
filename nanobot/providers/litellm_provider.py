@@ -189,7 +189,12 @@ class LiteLLMProvider(LLMProvider):
                     try:
                         args = json.loads(args)
                     except json.JSONDecodeError:
-                        args = {"raw": args}
+                        from loguru import logger
+
+                        logger.warning(
+                            f"Malformed tool call arguments for {tc.function.name}: skipping"
+                        )
+                        continue
 
                 tool_calls.append(
                     ToolCallRequest(

@@ -39,13 +39,22 @@ agent should act.
 ## Active Sessions
 {tmux_sessions}
 
+## Overdue Follow-ups
+{overdue_followups}
+
+## Tool Lessons / Known Issues
+{tools_lessons}
+
 Respond with JSON only: {{"act": true/false, "reason": "...", \
 "priority": "low/medium/high", "complexity": "simple/complex"}}
 Rules:
 - act=true only if there are clear, actionable tasks
 - Checked/completed items (- [x]) are NOT actionable
 - Empty/missing strategy file means act=false
-- complexity=simple for quick tasks (< 5 min), complex for longer tasks"""
+- complexity=simple for quick tasks (< 5 min), complex for longer tasks
+- Overdue follow-ups are high priority and should always trigger action
+- If tool lessons contain recurring failures or "FIX NEEDED" markers, \
+suggest a self-improvement task with complexity=complex"""
 
 EXECUTION_PROMPT_TEMPLATE = """\
 [Daemon Mode - Priority: {priority}]
@@ -106,6 +115,9 @@ class HeartbeatService:
         strategy_file: str = "HEARTBEAT.md",
         max_iterations: int = 25,
         cooldown_after_action: int = 600,
+        cooldown_high: int = 60,
+        cooldown_medium: int = 300,
+        cooldown_low: int = 600,
         registry: "AgentRegistry | None" = None,
         registry_config: Any = None,
         on_notify: Callable[[str], Coroutine[Any, Any, None]] | None = None,
@@ -124,9 +136,24 @@ class HeartbeatService:
         self._execution_model = execution_model
         self._strategy_file = strategy_file
         self._max_iterations = max_iterations
-        self._cooldown_s = cooldown_after_action
-        self._last_action_time: float = 0
         self._daemon_mode = triage_provider is not None
+
+        # Per-priority cooldowns
+        self._cooldowns = {
+            "high": cooldown_high,
+            "medium": cooldown_medium,
+            "low": cooldown_low,
+        }
+        self._last_action_by_priority: dict[str, float] = {
+            "high": 0.0,
+            "medium": 0.0,
+            "low": 0.0,
+        }
+
+        # Dynamic interval: shorter during active conversations
+        self._base_interval = interval_s
+        self._active_interval = max(60, interval_s // 6)
+        self._last_user_activity: float = 0.0
 
         # Registry params
         self._registry = registry
@@ -175,11 +202,22 @@ class HeartbeatService:
             self._monitor_task.cancel()
             self._monitor_task = None
 
+    def notify_user_activity(self) -> None:
+        """Called by AgentLoop when a user message is processed."""
+        self._last_user_activity = time.time()
+
+    @property
+    def _current_interval(self) -> int:
+        """Shorter interval during active conversation periods."""
+        if time.time() - self._last_user_activity < 600:
+            return self._active_interval
+        return self._base_interval
+
     async def _run_loop(self) -> None:
-        """Main heartbeat loop."""
+        """Main heartbeat loop with dynamic intervals."""
         while self._running:
             try:
-                await asyncio.sleep(self.interval_s)
+                await asyncio.sleep(self._current_interval)
                 if self._running:
                     await self._tick()
             except asyncio.CancelledError:
@@ -267,23 +305,74 @@ class HeartbeatService:
         except Exception as e:
             logger.warning(f"Tier 0: tmux check failed: {e}")
 
-        has_signals = bool(strategy_content) or bool(tmux_sessions)
+        # Check for overdue follow-ups
+        overdue_followups: list[str] = []
+        try:
+            followup_db = Path.home() / ".nanobot" / "data" / "followups.db"
+            if followup_db.exists():
+                import sqlite3
+
+                db = sqlite3.connect(str(followup_db))
+                now_ms = int(time.time() * 1000)
+                rows = db.execute(
+                    "SELECT description, deadline_ms FROM followups "
+                    "WHERE status = 'pending' "
+                    "AND deadline_ms IS NOT NULL "
+                    "AND deadline_ms <= ?",
+                    (now_ms,),
+                ).fetchall()
+                db.close()
+                overdue_followups = [r[0] for r in rows]
+        except Exception as e:
+            logger.warning(f"Tier 0: follow-up check failed: {e}")
+
+        # Check TOOLS.md for recorded tool failures/lessons
+        tools_lessons: str | None = None
+        try:
+            tools_md = self.workspace / "TOOLS.md"
+            if tools_md.exists():
+                content = tools_md.read_text(encoding="utf-8")
+                markers = [
+                    "FAILURE",
+                    "LESSON",
+                    "ERROR",
+                    "MISTAKE",
+                    "BUG",
+                    "FIX NEEDED",
+                ]
+                if any(m in content.upper() for m in markers):
+                    tools_lessons = content[-2000:]
+        except Exception as e:
+            logger.warning(f"Tier 0: TOOLS.md check failed: {e}")
+
+        has_signals = (
+            bool(strategy_content)
+            or bool(tmux_sessions)
+            or bool(overdue_followups)
+            or bool(tools_lessons)
+        )
 
         return {
             "strategy_content": strategy_content,
             "git_status": git_status,
             "tmux_sessions": tmux_sessions,
+            "overdue_followups": overdue_followups,
+            "tools_lessons": tools_lessons,
             "has_signals": has_signals,
         }
 
     async def _triage(self, context: dict[str, Any]) -> dict[str, Any]:
         """Tier 1: Triage context with a cheap LLM call."""
         try:
+            overdue = context.get("overdue_followups", [])
+            overdue_str = "\n".join(f"- {f}" for f in overdue) if overdue else "None."
             prompt = TRIAGE_PROMPT_TEMPLATE.format(
                 strategy_file=self._strategy_file,
                 strategy_content=(context["strategy_content"] or "No strategy file found."),
-                git_status=context["git_status"] or "Not a git repository.",
+                git_status=(context["git_status"] or "Not a git repository."),
                 tmux_sessions=(context["tmux_sessions"] or "No active sessions."),
+                overdue_followups=overdue_str,
+                tools_lessons=(context.get("tools_lessons") or "None."),
             )
 
             assert self._triage_provider is not None
@@ -317,11 +406,25 @@ class HeartbeatService:
         triage: dict[str, Any],
     ) -> None:
         """Tier 2: Execute action via the main agent loop or spawn subagent."""
-        elapsed = time.time() - self._last_action_time
-        if elapsed < self._cooldown_s:
-            remaining = int(self._cooldown_s - elapsed)
-            logger.info(f"Tier 2: cooldown active, {remaining}s remaining")
-            return
+        priority = triage.get("priority", "low")
+        cooldown = self._cooldowns.get(priority, 600)
+        last_action = self._last_action_by_priority.get(priority, 0)
+        elapsed = time.time() - last_action
+
+        if elapsed < cooldown:
+            # High priority can bypass if 60s since ANY action
+            if priority == "high":
+                min_elapsed = min(time.time() - t for t in self._last_action_by_priority.values())
+                if min_elapsed >= self._cooldowns["high"]:
+                    logger.info("Tier 2: high-priority task bypassing lower-priority cooldown")
+                else:
+                    remaining = int(self._cooldowns["high"] - min_elapsed)
+                    logger.info(f"Tier 2: high-priority cooldown, {remaining}s remaining")
+                    return
+            else:
+                remaining = int(cooldown - elapsed)
+                logger.info(f"Tier 2: {priority}-priority cooldown active, {remaining}s remaining")
+                return
 
         complexity = triage.get("complexity", "simple")
         reason = triage.get("reason", "")
@@ -337,7 +440,7 @@ class HeartbeatService:
                     complexity="complex",
                 )
                 await self._on_spawn(reason, task_id)
-                self._last_action_time = time.time()
+                self._last_action_by_priority[priority] = time.time()
                 logger.info(f"Tier 2: spawned subagent for complex task {task_id}")
                 return
             except Exception as e:
@@ -355,7 +458,7 @@ class HeartbeatService:
         try:
             if self.on_heartbeat:
                 await self.on_heartbeat(prompt)
-            self._last_action_time = time.time()
+            self._last_action_by_priority[priority] = time.time()
             logger.info("Tier 2: daemon action executed")
         except Exception as e:
             logger.warning(f"Tier 2: execution failed: {e}")

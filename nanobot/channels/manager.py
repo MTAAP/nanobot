@@ -1,10 +1,12 @@
 """Channel manager for coordinating chat channels."""
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
 
+from nanobot.bus.delivery import DeliveryQueue
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import Config
@@ -17,7 +19,7 @@ class ChannelManager:
     Responsibilities:
     - Initialize enabled channels (Telegram, WhatsApp, etc.)
     - Start/stop channels
-    - Route outbound messages
+    - Route outbound messages with persistent delivery queue
     """
 
     def __init__(self, config: Config, bus: MessageBus):
@@ -25,6 +27,10 @@ class ChannelManager:
         self.bus = bus
         self.channels: dict[str, BaseChannel] = {}
         self._dispatch_task: asyncio.Task | None = None
+
+        # Persistent delivery queue for crash-safe outbound messages
+        self._delivery_queue = DeliveryQueue(Path.home() / ".nanobot" / "data" / "delivery.db")
+        self._delivery_queue.recover_in_flight()
 
         self._init_channels()
 
@@ -117,27 +123,43 @@ class ChannelManager:
             except Exception as e:
                 logger.error(f"Error stopping {name}: {e}")
 
+        # Close delivery queue
+        self._delivery_queue.close()
+
     async def _dispatch_outbound(self) -> None:
-        """Dispatch outbound messages to the appropriate channel."""
-        logger.info("Outbound dispatcher started")
+        """Dispatch outbound messages with persistent delivery and retry."""
+        logger.info("Outbound dispatcher started (with delivery queue)")
 
         while True:
             try:
-                msg = await asyncio.wait_for(self.bus.consume_outbound(), timeout=1.0)
+                # 1. Check for new messages from bus
+                try:
+                    msg = await asyncio.wait_for(self.bus.consume_outbound(), timeout=0.5)
+                    self._delivery_queue.enqueue(msg)
+                except asyncio.TimeoutError:
+                    pass
 
-                channel = self.channels.get(msg.channel)
-                if channel:
+                # 2. Process ready messages from delivery queue
+                ready = self._delivery_queue.dequeue_ready()
+                for delivery_id, msg in ready:
+                    channel = self.channels.get(msg.channel)
+                    if not channel:
+                        self._delivery_queue.mark_failed(
+                            delivery_id,
+                            f"unknown channel: {msg.channel}",
+                        )
+                        continue
                     try:
                         await channel.send(msg)
+                        self._delivery_queue.mark_delivered(delivery_id)
                     except Exception as e:
-                        logger.error(f"Error sending to {msg.channel}: {e}")
-                else:
-                    logger.warning(f"Unknown channel: {msg.channel}")
+                        self._delivery_queue.mark_failed(delivery_id, str(e)[:500])
 
-            except asyncio.TimeoutError:
-                continue
             except asyncio.CancelledError:
                 break
+            except Exception as e:
+                logger.error(f"Dispatch error: {e}")
+                await asyncio.sleep(1)
 
     def get_channel(self, name: str) -> BaseChannel | None:
         """Get a channel by name."""

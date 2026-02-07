@@ -54,6 +54,8 @@ class CronJob:
     created_at_ms: int = 0
     updated_at_ms: int = 0
     delete_after_run: bool = False
+    max_retries: int = 3
+    retry_count: int = 0
 
 
 @dataclass

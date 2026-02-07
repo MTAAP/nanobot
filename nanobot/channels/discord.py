@@ -80,6 +80,32 @@ class DiscordChannel(BaseChannel):
                 self._guild = self._client.get_guild(int(self.config.guild_id))
                 if self._guild:
                     logger.info(f"Connected to guild: {self._guild.name}")
+
+                    # Validate default notification channel
+                    if self.config.default_channel_id:
+                        default_ch = self._guild.get_channel(int(self.config.default_channel_id))
+                        if default_ch:
+                            logger.info(
+                                f"Validated default notification "
+                                f"channel: #{default_ch.name} "
+                                f"({self.config.default_channel_id})"
+                            )
+                        else:
+                            logger.warning(
+                                f"default_channel_id "
+                                f"{self.config.default_channel_id}"
+                                f" not found in guild "
+                                f"'{self._guild.name}'. Proactive "
+                                "messages will fail until this "
+                                "is fixed."
+                            )
+                    else:
+                        logger.warning(
+                            "No default_channel_id configured "
+                            "for Discord. Cron delivery and "
+                            "heartbeat notifications require "
+                            "this setting."
+                        )
                 else:
                     logger.warning(f"Could not find guild with ID: {self.config.guild_id}")
 

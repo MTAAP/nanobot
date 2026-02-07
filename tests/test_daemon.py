@@ -386,7 +386,7 @@ class TestDaemonTierTwo:
         triage = {"act": True, "reason": "go", "priority": "low"}
         await svc._execute_daemon_action(ctx, triage)
 
-        assert svc._last_action_time >= before
+        assert svc._last_action_by_priority["low"] >= before
 
     @pytest.mark.asyncio
     async def test_cooldown_prevents_rapid_execution(
@@ -404,7 +404,10 @@ class TestDaemonTierTwo:
             triage_model="test-model",
             cooldown_after_action=600,
         )
-        svc._last_action_time = time.time()
+        now = time.time()
+        svc._last_action_by_priority = {
+            "high": now, "medium": now, "low": now,
+        }
 
         ctx = {
             "strategy_content": "- Build feature",
@@ -428,8 +431,14 @@ class TestDaemonTierTwo:
             triage_provider=MagicMock(),
             triage_model="test-model",
             cooldown_after_action=10,
+            cooldown_high=10,
+            cooldown_medium=10,
+            cooldown_low=10,
         )
-        svc._last_action_time = time.time() - 20  # 20s ago, cooldown is 10s
+        past = time.time() - 20  # 20s ago, cooldown is 10s
+        svc._last_action_by_priority = {
+            "high": past, "medium": past, "low": past,
+        }
 
         ctx = {
             "strategy_content": "- task",

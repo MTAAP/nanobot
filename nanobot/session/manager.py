@@ -8,6 +8,7 @@ from typing import Any
 
 from loguru import logger
 
+from nanobot.utils.atomic import atomic_write_text
 from nanobot.utils.helpers import ensure_dir, safe_filename
 
 
@@ -191,20 +192,21 @@ class SessionManager:
         """Save a session to disk."""
         path = self._get_session_path(session.key)
 
-        with open(path, "w") as f:
-            # Write metadata first
-            metadata_line = {
-                "_type": "metadata",
-                "created_at": session.created_at.isoformat(),
-                "updated_at": session.updated_at.isoformat(),
-                "metadata": session.metadata,
-            }
-            f.write(json.dumps(metadata_line) + "\n")
+        lines: list[str] = []
+        # Write metadata first
+        metadata_line = {
+            "_type": "metadata",
+            "created_at": session.created_at.isoformat(),
+            "updated_at": session.updated_at.isoformat(),
+            "metadata": session.metadata,
+        }
+        lines.append(json.dumps(metadata_line))
 
-            # Write messages
-            for msg in session.messages:
-                f.write(json.dumps(msg) + "\n")
+        # Write messages
+        for msg in session.messages:
+            lines.append(json.dumps(msg))
 
+        atomic_write_text(path, "\n".join(lines) + "\n")
         self._cache[session.key] = session
 
     def delete(self, key: str) -> bool:
