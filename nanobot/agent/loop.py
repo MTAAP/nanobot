@@ -237,6 +237,7 @@ class AgentLoop:
             from nanobot.agent.tools.evolve import SelfEvolveTool
 
             self.tools.register(SelfEvolveTool(self._evolve_manager))
+            self.context.self_evolve_enabled = True
 
     def _init_evolve_manager(self, daemon_config: "DaemonConfig") -> None:
         """Initialize the self-evolution manager from config."""

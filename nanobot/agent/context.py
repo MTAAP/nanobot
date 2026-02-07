@@ -105,6 +105,7 @@ class ContextBuilder:
         self.skills = SkillsLoader(workspace)
         self.memory_enabled = memory_enabled
         self.core_memory = core_memory
+        self.self_evolve_enabled = False
         self._ensure_tools_md()
 
         # Bootstrap file caching
@@ -268,7 +269,26 @@ The file `{workspace_path}/HEARTBEAT.md` is checked every ~30 minutes.
 
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
-For normal conversation, just respond with text - do not call the message tool."""
+For normal conversation, just respond with text - do not call the message tool.
+{self._get_self_evolve_section()}"""
+
+    def _get_self_evolve_section(self) -> str:
+        """Get the self-evolution tool guidance (empty if disabled)."""
+        if not self.self_evolve_enabled:
+            return ""
+        return """
+
+### Self-Evolution (self_evolve tool)
+You can modify your own source code using the `self_evolve` tool. ALWAYS use this tool for:
+- Setting up the repo: action="setup_repo"
+- Creating feature branches: action="create_branch"
+- Running tests/lint: action="run_tests", action="run_lint"
+- Committing and pushing: action="commit_push"
+- Creating pull requests: action="create_pr"
+
+CRITICAL: NEVER claim to have run git commands or pushed code without actually calling the self_evolve tool.
+If you haven't called the tool, the operation did NOT happen. Do not fabricate or hallucinate git results.
+Always verify operations by checking tool output before reporting success."""
 
     def _get_tool_usage_section(self, workspace_path: str) -> str:
         """Get the tool usage knowledge section."""
