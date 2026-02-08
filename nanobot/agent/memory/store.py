@@ -53,8 +53,15 @@ class EmbeddingService:
         "text-embedding-3-large": 3072,
     }
 
-    def __init__(self, model: str = "text-embedding-3-small"):
+    def __init__(
+        self,
+        model: str = "text-embedding-3-small",
+        api_key: str | None = None,
+        api_base: str | None = None,
+    ):
         self.model = model
+        self.api_key = api_key
+        self.api_base = api_base
         self._dimension: int | None = self.EMBEDDING_DIMENSIONS.get(model)
 
     @lru_cache(maxsize=200)
@@ -62,7 +69,12 @@ class EmbeddingService:
         """Cached embedding call. Returns tuple for hashability."""
         import litellm
 
-        response = litellm.embedding(model=self.model, input=[text])
+        kwargs: dict[str, Any] = {"model": self.model, "input": [text]}
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+        response = litellm.embedding(**kwargs)
         return tuple(response.data[0]["embedding"])
 
     def embed(self, text: str) -> list[float]:
@@ -143,28 +155,37 @@ class VectorMemoryStore:
         return namespace
 
     def _init_db(self) -> None:
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                content TEXT NOT NULL,
-                embedding BLOB,
-                metadata TEXT DEFAULT '{}',
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                access_count INTEGER DEFAULT 0,
-                priority REAL DEFAULT 0.5,
-                namespace TEXT DEFAULT 'default'
+        try:
+            self._conn.execute("BEGIN")
+            self._conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    embedding BLOB,
+                    metadata TEXT DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    access_count INTEGER DEFAULT 0,
+                    priority REAL DEFAULT 0.5,
+                    namespace TEXT DEFAULT 'default'
+                )
+                """
             )
-            """
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace)"
-        )
-        self._conn.commit()
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at DESC)"
+            )
+            self._conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_namespace ON memories(namespace)"
+            )
+            self._conn.commit()
+        except Exception as e:
+            logger.error(f"Vector store DB init failed: path={self.db_path}, error={e}")
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
+            raise
 
     def add(
         self,

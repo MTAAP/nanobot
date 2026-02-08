@@ -137,6 +137,7 @@ class MemoryExtractionConfig(BaseModel):
     enabled: bool = False
     extraction_model: str = Field(default="gpt-4o-mini", alias="extractionModel")
     embedding_model: str = Field(default="text-embedding-3-small", alias="embeddingModel")
+    embedding_provider: str | None = Field(default=None, alias="embeddingProvider")
     max_memories: int = Field(default=1000, alias="maxMemories")
     extraction_interval: int = Field(default=10, alias="extractionInterval")
     max_facts_per_extraction: int = Field(default=5, alias="maxFactsPerExtraction")

@@ -1,6 +1,7 @@
 """Heartbeat service - periodic agent wake-up to check for tasks."""
 
 import asyncio
+import hashlib
 import json
 import tempfile
 import time
@@ -197,6 +198,9 @@ class HeartbeatService:
         self._on_notify = on_notify
         self._on_spawn = on_spawn
         self._monitor_task: asyncio.Task | None = None
+
+        # Content-hash tracking: skip triage when nothing changed since last no-action
+        self._last_noaction_hash: str | None = None
 
         # Ensure strategy file exists for new/existing deployments
         self._ensure_strategy_file()
@@ -425,7 +429,7 @@ class HeartbeatService:
             response = await self._triage_provider.chat(
                 messages=[{"role": "user", "content": prompt}],
                 model=self._triage_model,
-                temperature=0.2,
+                temperature=0.0,
                 max_tokens=256,
             )
 
@@ -478,6 +482,15 @@ class HeartbeatService:
         # Hybrid dispatch: complex tasks go to subagent via registry
         if complexity == "complex" and self._registry and self._on_spawn:
             try:
+                # Dedup: skip if a pending task with similar description already exists
+                from nanobot.registry.store import TaskState
+
+                existing = await self._registry.list_tasks(state=TaskState.PENDING)
+                for t in existing:
+                    if reason and reason[:40] in t.get("description", ""):
+                        logger.info(f"Tier 2: skipping duplicate task, existing={t.get('task_id')}")
+                        return
+
                 task_id = str(uuid.uuid4())[:8]
                 await self._registry.create_task(
                     task_id=task_id,
@@ -522,6 +535,14 @@ class HeartbeatService:
             logger.debug("Daemon tick: no signals detected")
             return
 
+        # Content-hash check: skip triage if nothing changed since last no-action
+        ctx_hash = hashlib.md5(
+            json.dumps(context, sort_keys=True, default=str).encode()
+        ).hexdigest()
+        if ctx_hash == self._last_noaction_hash:
+            logger.debug("Daemon tick: context unchanged since last no-action, skipping triage")
+            return
+
         # Tier 1: triage
         try:
             triage = await self._triage(context)
@@ -530,8 +551,12 @@ class HeartbeatService:
             return
 
         if not triage.get("act"):
+            self._last_noaction_hash = ctx_hash
             logger.info(f"Daemon tick: no action needed - {triage.get('reason')}")
             return
+
+        # Clear hash so next tick re-evaluates after action
+        self._last_noaction_hash = None
 
         # Tier 2: execute
         try:

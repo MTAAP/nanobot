@@ -104,7 +104,7 @@ class TestConversationalIntent:
 
 
 # ---------------------------------------------------------------------------
-# ACTION patterns (only matched by LLM fallback, not regex)
+# ACTION patterns (tier-1 regex for imperative verbs, LLM fallback for others)
 # ---------------------------------------------------------------------------
 
 
@@ -116,21 +116,59 @@ class TestActionIntent:
         assert await c.classify("Set a reminder for 5pm") == QueryIntent.VERIFY_STATE
 
     @pytest.mark.asyncio
-    async def test_run_script_via_llm(self) -> None:
-        provider = AsyncMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(content='{"intent": "action"}'))
-        c = IntentClassifier(llm_fallback=True, provider=provider)
+    async def test_run_script_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
         assert await c.classify("Run the deployment script") == QueryIntent.ACTION
 
     @pytest.mark.asyncio
-    async def test_create_file_via_llm(self) -> None:
-        provider = AsyncMock()
-        provider.chat = AsyncMock(return_value=LLMResponse(content='{"intent": "action"}'))
-        c = IntentClassifier(llm_fallback=True, provider=provider)
+    async def test_create_file_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
         assert await c.classify("Create a file called test.txt") == QueryIntent.ACTION
 
     @pytest.mark.asyncio
+    async def test_write_file_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Write my preferences to USER.md") == QueryIntent.ACTION
+
+    @pytest.mark.asyncio
+    async def test_update_file_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Update the HEARTBEAT.md with new tasks") == QueryIntent.ACTION
+
+    @pytest.mark.asyncio
+    async def test_install_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Install the new MCP server") == QueryIntent.ACTION
+
+    @pytest.mark.asyncio
+    async def test_please_add_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Please add the team info to USER.md") == QueryIntent.ACTION
+
+    @pytest.mark.asyncio
+    async def test_configure_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Configure the webhook listener") == QueryIntent.ACTION
+
+    @pytest.mark.asyncio
+    async def test_schedule_matches_verify_state(self) -> None:
+        """'Schedule' matches VERIFY_STATE (0.90) over ACTION (0.85)."""
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Schedule a daily backup at 9am") == QueryIntent.VERIFY_STATE
+
+    @pytest.mark.asyncio
+    async def test_delete_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Delete the old config files") == QueryIntent.ACTION
+
+    @pytest.mark.asyncio
+    async def test_deploy_via_regex(self) -> None:
+        c = IntentClassifier(llm_fallback=False)
+        assert await c.classify("Deploy the new version") == QueryIntent.ACTION
+
+    @pytest.mark.asyncio
     async def test_send_message_via_llm(self) -> None:
+        """'Send' is not in the tier-1 regex, so it falls back to LLM."""
         provider = AsyncMock()
         provider.chat = AsyncMock(return_value=LLMResponse(content='{"intent": "action"}'))
         c = IntentClassifier(llm_fallback=True, provider=provider)

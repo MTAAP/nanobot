@@ -326,7 +326,7 @@ class TestDaemonTierOne:
         mock_provider.chat.assert_called_once()
         call_kwargs = mock_provider.chat.call_args
         assert call_kwargs.kwargs["model"] == "gemini/flash-lite"
-        assert call_kwargs.kwargs["temperature"] == 0.2
+        assert call_kwargs.kwargs["temperature"] == 0.0
         assert call_kwargs.kwargs["max_tokens"] == 256
 
 

@@ -85,6 +85,27 @@ _TIER1_PATTERNS: list[tuple[re.Pattern[str], QueryIntent, float]] = [
         QueryIntent.VERIFY_STATE,
         0.80,
     ),
+    # ACTION -- imperative commands to perform file/system operations
+    (
+        re.compile(
+            r"(?:^|[.!?]\s+)(?:please\s+)?"
+            r"(?:write|create|update|edit|add|set\s+up|initialize|populate)"
+            r"\s+(?:the\s+|my\s+|a\s+|in\s+|to\s+)?\w",
+            re.IGNORECASE,
+        ),
+        QueryIntent.ACTION,
+        0.85,
+    ),
+    (
+        re.compile(
+            r"(?:^|[.!?]\s+)(?:please\s+)?"
+            r"(?:install|configure|schedule|run|execute|deploy|remove|delete)"
+            r"\s+\w",
+            re.IGNORECASE,
+        ),
+        QueryIntent.ACTION,
+        0.85,
+    ),
 ]
 
 _CONFIDENCE_THRESHOLD = 0.75

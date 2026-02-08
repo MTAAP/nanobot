@@ -266,8 +266,8 @@ class SubagentManager:
                     await self._registry.update_agent_state(
                         agent_id, AgentState.COMPLETED, reason="task finished"
                     )
-                except ValueError:
-                    pass  # May already be in a terminal state
+                except Exception:
+                    pass  # May already be in a terminal state or DB error
 
             logger.info(f"Subagent [{task_id}] completed successfully")
             await self._announce_result(task_id, label, task, final_result, origin, "ok")
@@ -284,13 +284,13 @@ class SubagentManager:
                     await self._registry.update_agent_state(
                         agent_id, AgentState.FAILED, reason=str(e)
                     )
-                except ValueError:
+                except Exception:
                     pass
                 try:
                     await self._registry.update_task_state(
                         registry_task_id, TaskState.FAILED, reason=str(e)
                     )
-                except ValueError:
+                except Exception:
                     pass
 
             await self._announce_result(task_id, label, task, error_msg, origin, "error")
@@ -313,7 +313,7 @@ class SubagentManager:
                         await self._registry.update_agent_state(
                             agent_id, AgentState.IDLE, reason="cleanup"
                         )
-                except (ValueError, Exception):
+                except Exception:
                     pass
 
     async def _pulse_loop(self, agent_id: str, interval: int = 60) -> None:

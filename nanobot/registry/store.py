@@ -72,7 +72,18 @@ class AgentRegistry:
         self._db_dir.mkdir(parents=True, exist_ok=True)
         self._db_path = self._db_dir / "registry.db"
         self._write_lock = asyncio.Lock()
-        self._init_db()
+        logger.debug(f"Registry store: db_path={self._db_path}")
+        try:
+            self._init_db()
+        except Exception as e:
+            parent = self._db_path.parent
+            logger.error(
+                f"Registry DB init failed: path={self._db_path}, "
+                f"parent_exists={parent.exists()}, "
+                f"parent_writable={os.access(parent, os.W_OK)}, "
+                f"error={e}"
+            )
+            raise
 
     @property
     def db_path(self) -> Path:
@@ -82,7 +93,7 @@ class AgentRegistry:
         """Initialize database schema."""
         with sqlite3.connect(str(self._db_path)) as conn:
             conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA busy_timeout=10000")
+            conn.execute("PRAGMA busy_timeout=30000")
 
             conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)")
 
