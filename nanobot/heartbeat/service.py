@@ -29,13 +29,13 @@ DEFAULT_STRATEGY_CONTENT = """\
      Mark completed tasks with [x] — they will be skipped on future ticks.
 
      When to add tasks here:
-     - Recurring checks you want performed periodically
-     - Background maintenance tasks
+     - Background monitoring and maintenance YOU identify
      - Self-improvement goals based on TOOLS.md lessons
+     - Internal housekeeping (never user-requested recurring tasks -- those go to cron)
 
      Example:
-     - [ ] Check for new messages in all channels
      - [ ] Review TOOLS.md for recurring failures and create fix PRs
+     - [ ] Check workspace for stale temp files
 -->
 """
 

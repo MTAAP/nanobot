@@ -70,8 +70,9 @@ document the tools here with usage patterns.
 - Best practices: Use for tasks that don't need immediate response
 
 ### cron
-- Use when: Need to schedule tasks for specific times or intervals
-- Best practices: Use 'at' for one-time, 'cron' for recurring
+- Use when: User requests scheduled/recurring tasks, reminders, or time-based notifications
+- Best practices: Use 'at' for one-time, 'cron' for recurring. Always set deliver=true for user-facing jobs.
+- NOTE: Never use HEARTBEAT.md for user-requested tasks -- always use this cron tool
 
 ### install_mcp_server
 - Use when: User wants to add new MCP server capabilities
@@ -236,7 +237,6 @@ Skills with available="false" need dependencies installed first - you can try in
 **Time (approximate)**: {now} -- always verify with `exec("date")` for precision
 **Runtime**: {self._get_runtime_info()}
 **Workspace**: {workspace_path}
-- Memory files: {workspace_path}/memory/MEMORY.md
 - Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
 
@@ -268,7 +268,6 @@ You are nanobot, a helpful AI assistant. You have access to tools that allow you
 
 ## Workspace
 Your workspace is at: {workspace_path}
-- Memory files: {workspace_path}/memory/MEMORY.md
 - Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
 
@@ -281,7 +280,7 @@ directories (e.g. `workspace/temp/workspace/`). For code modifications, use the
 {self._get_tool_usage_section(workspace_path)}
 
 Always be helpful, accurate, and concise. When using tools, explain what you're doing.
-When remembering something, write to {workspace_path}/memory/MEMORY.md"""
+When remembering something, use the memory tools (memory_search, write_file to daily notes)."""
 
     def _get_capabilities_section(self, workspace_path: str) -> str:
         """Get the proactive capabilities section."""
@@ -304,14 +303,17 @@ Example cron expressions:
 - `*/30 * * * *` = every 30 minutes
 - `0 */2 * * *` = every 2 hours
 
-### Heartbeat Tasks (HEARTBEAT.md)
-The file `{workspace_path}/HEARTBEAT.md` is checked every ~30 minutes.
+### Heartbeat Tasks (HEARTBEAT.md) -- AGENT-ONLY
+The file `{workspace_path}/HEARTBEAT.md` is your private task list, checked every ~30 minutes.
+- ONLY for self-directed background work: self-improvement, monitoring, maintenance
+- NEVER put user-requested tasks here -- use the cron tool instead
 - Add tasks as markdown checkboxes: `- [ ] Task description`
-- You'll be asked to read and act on any tasks listed
 
-**When to use cron vs heartbeat:**
-- Use **cron** for precise timing (9 AM daily, every 2 hours)
-- Use **HEARTBEAT.md** for approximate periodic checks (~30 min)
+### When to use cron vs heartbeat:
+- **User says "remind me", "every day at 9 AM", "check X daily"** -> cron tool (always)
+- **User asks to schedule anything** -> cron tool (always)
+- **Agent identifies own maintenance/improvement task** -> HEARTBEAT.md
+- When in doubt, use cron -- it's more precise and user-visible
 
 IMPORTANT: When responding to direct questions or conversations, reply directly with your text response.
 Only use the 'message' tool when you need to send a message to a specific chat channel (like WhatsApp).
