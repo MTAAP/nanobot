@@ -482,14 +482,18 @@ class HeartbeatService:
         # Hybrid dispatch: complex tasks go to subagent via registry
         if complexity == "complex" and self._registry and self._on_spawn:
             try:
-                # Dedup: skip if a pending task with similar description already exists
+                # Dedup: skip if a task with similar description is pending or active
                 from nanobot.registry.store import TaskState
 
-                existing = await self._registry.list_tasks(state=TaskState.PENDING)
-                for t in existing:
-                    if reason and reason[:40] in t.get("description", ""):
-                        logger.info(f"Tier 2: skipping duplicate task, existing={t.get('task_id')}")
-                        return
+                for state in (TaskState.PENDING, TaskState.ASSIGNED, TaskState.IN_PROGRESS):
+                    existing = await self._registry.list_tasks(state=state)
+                    for t in existing:
+                        if reason and reason[:40] in t.get("description", ""):
+                            logger.info(
+                                f"Tier 2: skipping duplicate task ({state.value}), "
+                                f"existing={t.get('task_id')}"
+                            )
+                            return
 
                 task_id = str(uuid.uuid4())[:8]
                 await self._registry.create_task(
@@ -555,13 +559,14 @@ class HeartbeatService:
             logger.info(f"Daemon tick: no action needed - {triage.get('reason')}")
             return
 
-        # Clear hash so next tick re-evaluates after action
-        self._last_noaction_hash = None
-
         # Tier 2: execute
         try:
             await self._execute_daemon_action(context, triage)
+            # Cache hash after action so identical context won't re-trigger
+            self._last_noaction_hash = ctx_hash
         except Exception as e:
+            # Clear hash on failure so next tick retries
+            self._last_noaction_hash = None
             logger.warning(f"Daemon tick: execution failed: {e}")
 
     async def trigger_now(self) -> str | None:

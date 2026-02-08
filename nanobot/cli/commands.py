@@ -329,6 +329,7 @@ def gateway(
             origin_channel=origin_channel,
             origin_chat_id=origin_chat_id,
             registry_task_id=task_id,
+            silent=True,
         )
 
     heartbeat = HeartbeatService(

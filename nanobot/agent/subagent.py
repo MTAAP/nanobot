@@ -64,6 +64,7 @@ class SubagentManager:
         origin_channel: str = "cli",
         origin_chat_id: str = "direct",
         registry_task_id: str | None = None,
+        silent: bool = False,
     ) -> str:
         """
         Spawn a subagent to execute a task in the background.
@@ -74,6 +75,7 @@ class SubagentManager:
             origin_channel: The channel to announce results to.
             origin_chat_id: The chat ID to announce results to.
             registry_task_id: Optional task ID from the agent registry.
+            silent: If True, suppress result announcements to the message bus.
 
         Returns:
             Status message indicating the subagent was started.
@@ -88,7 +90,7 @@ class SubagentManager:
 
         # Create background task
         bg_task = asyncio.create_task(
-            self._run_subagent(task_id, task, display_label, origin, registry_task_id)
+            self._run_subagent(task_id, task, display_label, origin, registry_task_id, silent)
         )
         self._running_tasks[task_id] = bg_task
 
@@ -105,6 +107,7 @@ class SubagentManager:
         label: str,
         origin: dict[str, str],
         registry_task_id: str | None = None,
+        silent: bool = False,
     ) -> None:
         """Execute the subagent task and announce the result."""
         logger.info(f"Subagent [{task_id}] starting task: {label}")
@@ -144,9 +147,10 @@ class SubagentManager:
                     )
                 except HandshakeError as e:
                     logger.error(f"Subagent [{task_id}] handshake failed: {e}")
-                    await self._announce_result(
-                        task_id, label, task, f"Handshake failed: {e}", origin, "error"
-                    )
+                    if not silent:
+                        await self._announce_result(
+                            task_id, label, task, f"Handshake failed: {e}", origin, "error"
+                        )
                     return
 
                 # Transition task to IN_PROGRESS
@@ -270,7 +274,8 @@ class SubagentManager:
                     pass  # May already be in a terminal state or DB error
 
             logger.info(f"Subagent [{task_id}] completed successfully")
-            await self._announce_result(task_id, label, task, final_result, origin, "ok")
+            if not silent:
+                await self._announce_result(task_id, label, task, final_result, origin, "ok")
 
         except Exception as e:
             error_msg = f"Error: {str(e)}"
@@ -293,7 +298,8 @@ class SubagentManager:
                 except Exception:
                     pass
 
-            await self._announce_result(task_id, label, task, error_msg, origin, "error")
+            if not silent:
+                await self._announce_result(task_id, label, task, error_msg, origin, "error")
 
         finally:
             if pulse_task:
