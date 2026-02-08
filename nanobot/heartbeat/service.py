@@ -18,6 +18,26 @@ if TYPE_CHECKING:
 # Default interval: 30 minutes
 DEFAULT_HEARTBEAT_INTERVAL_S = 30 * 60
 
+# Default HEARTBEAT.md content — headers + HTML comments only so
+# _is_heartbeat_empty() treats it as "no actionable tasks".
+DEFAULT_STRATEGY_CONTENT = """\
+# Heartbeat Strategy
+
+<!-- This file is checked by the daemon every ~30 minutes (or ~5 min during active chat).
+     Add tasks below as markdown checkboxes. The daemon will read and execute them.
+     Mark completed tasks with [x] — they will be skipped on future ticks.
+
+     When to add tasks here:
+     - Recurring checks you want performed periodically
+     - Background maintenance tasks
+     - Self-improvement goals based on TOOLS.md lessons
+
+     Example:
+     - [ ] Check for new messages in all channels
+     - [ ] Review TOOLS.md for recurring failures and create fix PRs
+-->
+"""
+
 # The prompt sent to agent during heartbeat
 HEARTBEAT_PROMPT = """Read HEARTBEAT.md in your workspace (if it exists).
 Follow any instructions or tasks listed there.
@@ -74,16 +94,32 @@ Mark completed tasks with [x] in the strategy file."""
 
 
 def _is_heartbeat_empty(content: str | None) -> bool:
-    """Check if HEARTBEAT.md has no actionable content."""
+    """Check if HEARTBEAT.md has no actionable content.
+
+    Skips blank lines, markdown headers, HTML comments (including multi-line),
+    and checked/unchecked checkboxes without text beyond the marker.
+    """
     if not content:
         return True
 
-    # Lines to skip: empty, headers, HTML comments, empty checkboxes
     skip_patterns = {"- [ ]", "* [ ]", "- [x]", "* [x]"}
+    in_comment = False
 
     for line in content.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("#") or line.startswith("<!--") or line in skip_patterns:
+        stripped = line.strip()
+
+        # Track multi-line HTML comments
+        if in_comment:
+            if "-->" in stripped:
+                in_comment = False
+            continue
+
+        if stripped.startswith("<!--"):
+            if "-->" not in stripped:
+                in_comment = True
+            continue
+
+        if not stripped or stripped.startswith("#") or stripped in skip_patterns:
             continue
         return False  # Found actionable content
 
@@ -162,6 +198,9 @@ class HeartbeatService:
         self._on_spawn = on_spawn
         self._monitor_task: asyncio.Task | None = None
 
+        # Ensure strategy file exists for new/existing deployments
+        self._ensure_strategy_file()
+
     @property
     def heartbeat_file(self) -> Path:
         return self.workspace / self._strategy_file
@@ -174,6 +213,17 @@ class HeartbeatService:
             except Exception:
                 return None
         return None
+
+    def _ensure_strategy_file(self) -> None:
+        """Create the default strategy file if it doesn't exist."""
+        if self.heartbeat_file.exists():
+            return
+        try:
+            self.heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
+            self.heartbeat_file.write_text(DEFAULT_STRATEGY_CONTENT, encoding="utf-8")
+            logger.info(f"Created default strategy file: {self.heartbeat_file}")
+        except Exception as e:
+            logger.warning(f"Failed to create strategy file: {e}")
 
     async def start(self) -> None:
         """Start the heartbeat service."""
@@ -262,11 +312,12 @@ class HeartbeatService:
         git_status: str | None = None
         tmux_sessions: str | None = None
 
-        # Read strategy file
+        # Read strategy file (treat template-only content as empty)
         try:
             sf = self.workspace / self._strategy_file
             if sf.exists():
-                strategy_content = sf.read_text(encoding="utf-8")
+                raw = sf.read_text(encoding="utf-8")
+                strategy_content = None if _is_heartbeat_empty(raw) else raw
         except Exception as e:
             logger.warning(f"Tier 0: failed to read strategy file: {e}")
 
@@ -345,12 +396,7 @@ class HeartbeatService:
         except Exception as e:
             logger.warning(f"Tier 0: TOOLS.md check failed: {e}")
 
-        has_signals = (
-            bool(strategy_content)
-            or bool(tmux_sessions)
-            or bool(overdue_followups)
-            or bool(tools_lessons)
-        )
+        has_signals = bool(strategy_content) or bool(overdue_followups) or bool(tools_lessons)
 
         return {
             "strategy_content": strategy_content,

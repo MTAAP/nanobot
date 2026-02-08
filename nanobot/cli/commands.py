@@ -76,7 +76,10 @@ def onboard():
 
 def _create_workspace_templates(workspace: Path):
     """Create default workspace template files."""
+    from nanobot.heartbeat.service import DEFAULT_STRATEGY_CONTENT
+
     templates = {
+        "HEARTBEAT.md": DEFAULT_STRATEGY_CONTENT,
         "AGENTS.md": """# Agent Instructions
 
 You are a helpful AI assistant. Be concise, accurate, and friendly.
