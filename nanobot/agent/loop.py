@@ -890,6 +890,15 @@ class AgentLoop:
         # Extract channel context from metadata (e.g., Discord channel history)
         channel_context = msg.metadata.get("channel_context", "") if msg.metadata else ""
 
+        # Extract reply context (the message being replied to)
+        reply_context = msg.metadata.get("reply_context", "") if msg.metadata else ""
+        if reply_context:
+            reply_header = f"[Replying to: {reply_context}]"
+            if channel_context:
+                channel_context = f"{channel_context}\n\n{reply_header}"
+            else:
+                channel_context = reply_header
+
         # Classify intent to decide memory injection and tool_choice
         intent = await self._intent_classifier.classify(msg.content)
         logger.debug(f"Query intent: {intent.value}")
