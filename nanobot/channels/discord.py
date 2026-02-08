@@ -499,6 +499,10 @@ class DiscordChannel(BaseChannel):
 
         final_content = "\n".join(content_parts) if content_parts else "[empty message]"
 
+        # Build mention context (sender info + mention mappings)
+        mention_ctx = self._build_mention_context(message, final_content)
+        final_content = f"{mention_ctx}\n{final_content}"
+
         logger.debug(f"Discord message from {sender_id}: {final_content[:50]}...")
 
         # Forward to message bus
@@ -573,6 +577,8 @@ class DiscordChannel(BaseChannel):
                 # Format: "username: message content"
                 author = msg.author.display_name or msg.author.name
                 content = msg.content[:500]  # Truncate very long messages
+                if msg.guild:
+                    content = self._resolve_mentions(content, msg.guild)
                 history_messages.append(f"{author}: {content}")
 
             if not history_messages:
@@ -607,6 +613,41 @@ class DiscordChannel(BaseChannel):
             content = pattern.sub("", content)
 
         return content.strip()
+
+    def _resolve_mentions(self, content: str, guild: discord.Guild) -> str:
+        """Resolve <@user_id> mentions to @DisplayName for readability."""
+
+        def replace_mention(match: re.Match) -> str:
+            user_id = int(match.group(1))
+            member = guild.get_member(user_id)
+            if member:
+                return f"@{member.display_name}"
+            return match.group(0)
+
+        return re.sub(r"<@!?(\d+)>", replace_mention, content)
+
+    def _build_mention_context(self, message: "DiscordMessage", content: str) -> str:
+        """Build a context header with sender info and mention mappings."""
+        parts = []
+
+        # Sender identity with mention syntax
+        display = message.author.display_name or message.author.name
+        parts.append(f"[From: {display} <@{message.author.id}>]")
+
+        # Resolve any user mentions in the content to a mapping
+        if message.mentions and message.guild:
+            mappings = []
+            for user in message.mentions:
+                # Skip bot's own mention (already stripped from content)
+                if self._client and self._client.user and user.id == self._client.user.id:
+                    continue
+                member = message.guild.get_member(user.id)
+                name = member.display_name if member else user.display_name
+                mappings.append(f"<@{user.id}> = {name}")
+            if mappings:
+                parts.append(f"[Mentions: {', '.join(mappings)}]")
+
+        return "\n".join(parts)
 
     def _create_embed(self, content: str) -> discord.Embed:
         """Create a formatted Discord embed for the response."""
