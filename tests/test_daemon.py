@@ -649,3 +649,77 @@ class TestDaemonConfig:
         assert hasattr(defaults, "daemon")
         assert defaults.daemon.enabled is True
         assert defaults.daemon.interval == 300
+
+
+class TestNotificationChannelResolution:
+    """Tests for ChannelsConfig.get_notification_channel()."""
+
+    def test_discord_has_first_priority(self) -> None:
+        """Discord wins when both Discord and Telegram are configured."""
+        from nanobot.config.schema import ChannelsConfig
+
+        cfg = ChannelsConfig(
+            discord={"enabled": True, "default_channel_id": "d-123"},
+            telegram={"enabled": True, "default_chat_id": "t-456"},
+        )
+        result = cfg.get_notification_channel()
+        assert result == ("discord", "d-123")
+
+    def test_telegram_when_discord_disabled(self) -> None:
+        """Telegram is used when Discord is disabled."""
+        from nanobot.config.schema import ChannelsConfig
+
+        cfg = ChannelsConfig(
+            discord={"enabled": False, "default_channel_id": "d-123"},
+            telegram={"enabled": True, "default_chat_id": "t-456"},
+        )
+        result = cfg.get_notification_channel()
+        assert result == ("telegram", "t-456")
+
+    def test_telegram_when_discord_has_no_default_id(self) -> None:
+        """Telegram is used when Discord has no default_channel_id."""
+        from nanobot.config.schema import ChannelsConfig
+
+        cfg = ChannelsConfig(
+            discord={"enabled": True, "default_channel_id": ""},
+            telegram={"enabled": True, "default_chat_id": "t-456"},
+        )
+        result = cfg.get_notification_channel()
+        assert result == ("telegram", "t-456")
+
+    def test_whatsapp_fallback(self) -> None:
+        """WhatsApp is used when Discord and Telegram are unavailable."""
+        from nanobot.config.schema import ChannelsConfig
+
+        cfg = ChannelsConfig(
+            whatsapp={"enabled": True, "default_chat_id": "w-789"},
+        )
+        result = cfg.get_notification_channel()
+        assert result == ("whatsapp", "w-789")
+
+    def test_feishu_fallback(self) -> None:
+        """Feishu is used as last resort."""
+        from nanobot.config.schema import ChannelsConfig
+
+        cfg = ChannelsConfig(
+            feishu={"enabled": True, "default_chat_id": "f-000"},
+        )
+        result = cfg.get_notification_channel()
+        assert result == ("feishu", "f-000")
+
+    def test_returns_none_when_no_channel_configured(self) -> None:
+        """Returns None when no channels are enabled."""
+        from nanobot.config.schema import ChannelsConfig
+
+        cfg = ChannelsConfig()
+        assert cfg.get_notification_channel() is None
+
+    def test_returns_none_when_enabled_but_no_default_id(self) -> None:
+        """Returns None when channel is enabled but has no default chat ID."""
+        from nanobot.config.schema import ChannelsConfig
+
+        cfg = ChannelsConfig(
+            telegram={"enabled": True, "default_chat_id": ""},
+            discord={"enabled": True, "default_channel_id": ""},
+        )
+        assert cfg.get_notification_channel() is None

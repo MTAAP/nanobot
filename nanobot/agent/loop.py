@@ -1051,6 +1051,9 @@ class AgentLoop:
             if content.startswith("```"):
                 content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
+            if not content:
+                return
+
             entities = json.loads(content)
             if not isinstance(entities, list):
                 return

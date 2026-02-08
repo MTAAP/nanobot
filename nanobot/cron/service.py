@@ -9,7 +9,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Coroutine
 
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
@@ -47,7 +46,6 @@ class CronService:
         # SQLite paths
         data_dir = store_path.parent
         self._db_path = data_dir / "cron.db"
-        self._scheduler_db = f"sqlite:///{data_dir / 'scheduler.db'}"
 
         # APScheduler
         self._scheduler: AsyncIOScheduler | None = None
@@ -78,17 +76,18 @@ class CronService:
         self._db.commit()
 
     def _init_scheduler(self) -> None:
-        """Initialize APScheduler with SQLite job store."""
-        jobstores = {
-            "default": SQLAlchemyJobStore(url=self._scheduler_db),
-        }
+        """Initialize APScheduler with in-memory job store.
+
+        Our cron_jobs SQLite table is the source of truth. _sync_scheduler()
+        rebuilds all APScheduler jobs from it on every startup, so a persistent
+        job store is redundant and causes pickle errors with closures.
+        """
         job_defaults = {
             "coalesce": True,
             "max_instances": 1,
             "misfire_grace_time": 3600,
         }
         self._scheduler = AsyncIOScheduler(
-            jobstores=jobstores,
             job_defaults=job_defaults,
         )
 

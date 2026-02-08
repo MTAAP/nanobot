@@ -294,26 +294,32 @@ def gateway(
 
     # Registry callbacks
     async def on_daemon_notify(message: str) -> None:
-        """Post daemon notification to Discord default channel."""
+        """Post daemon notification to the first configured notification channel."""
         from nanobot.bus.events import OutboundMessage
 
-        discord_cfg = config.channels.discord
-        if discord_cfg.enabled and discord_cfg.default_channel_id:
+        target = config.channels.get_notification_channel()
+        if target:
+            channel_name, chat_id = target
             await bus.publish_outbound(
                 OutboundMessage(
-                    channel="discord",
-                    chat_id=discord_cfg.default_channel_id,
+                    channel=channel_name,
+                    chat_id=chat_id,
                     content=message,
                 )
             )
+        else:
+            logger.warning("Daemon notification dropped: no channel with a default chat ID")
 
     async def on_daemon_spawn(task_description: str, task_id: str) -> str:
         """Spawn a subagent for a complex daemon task."""
+        target = config.channels.get_notification_channel()
+        origin_channel = target[0] if target else "daemon"
+        origin_chat_id = target[1] if target else "direct"
         return await agent.subagents.spawn(
             task=task_description,
             label=f"daemon-{task_id}",
-            origin_channel="discord",
-            origin_chat_id=config.channels.discord.default_channel_id or "direct",
+            origin_channel=origin_channel,
+            origin_chat_id=origin_chat_id,
             registry_task_id=task_id,
         )
 

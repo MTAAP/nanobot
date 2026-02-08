@@ -12,6 +12,7 @@ class WhatsAppConfig(BaseModel):
     enabled: bool = False
     bridge_url: str = "ws://localhost:3001"
     allow_from: list[str] = Field(default_factory=list)  # Allowed phone numbers
+    default_chat_id: str = ""  # Chat for proactive messages (cron, notifications)
 
 
 class TelegramConfig(BaseModel):
@@ -20,6 +21,7 @@ class TelegramConfig(BaseModel):
     enabled: bool = False
     token: str = ""  # Bot token from @BotFather
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs or usernames
+    default_chat_id: str = ""  # Chat for proactive messages (cron, notifications)
     proxy: str | None = (
         None  # HTTP/SOCKS5 proxy URL, e.g. "http://127.0.0.1:7890" or "socks5://127.0.0.1:1080"
     )
@@ -34,6 +36,7 @@ class FeishuConfig(BaseModel):
     encrypt_key: str = ""  # Encrypt Key for event subscription (optional)
     verification_token: str = ""  # Verification Token for event subscription (optional)
     allow_from: list[str] = Field(default_factory=list)  # Allowed user open_ids
+    default_chat_id: str = ""  # Chat for proactive messages (cron, notifications)
 
 
 class DiscordConfig(BaseModel):
@@ -61,6 +64,18 @@ class ChannelsConfig(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
+
+    def get_notification_channel(self) -> tuple[str, str] | None:
+        """Return (channel_name, chat_id) for the first enabled channel with a default ID."""
+        if self.discord.enabled and self.discord.default_channel_id:
+            return ("discord", self.discord.default_channel_id)
+        if self.telegram.enabled and self.telegram.default_chat_id:
+            return ("telegram", self.telegram.default_chat_id)
+        if self.whatsapp.enabled and self.whatsapp.default_chat_id:
+            return ("whatsapp", self.whatsapp.default_chat_id)
+        if self.feishu.enabled and self.feishu.default_chat_id:
+            return ("feishu", self.feishu.default_chat_id)
+        return None
 
 
 class ContextConfig(BaseModel):
