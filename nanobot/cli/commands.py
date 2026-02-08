@@ -245,6 +245,7 @@ def gateway(
         guardrail_config=config.agents.defaults.guardrails,
         temperature=config.agents.defaults.temperature,
         tool_temperature=config.agents.defaults.tool_temperature,
+        timezone=config.agents.defaults.timezone,
     )
 
     # Set the cron callback using agent's process_direct
@@ -377,6 +378,7 @@ def gateway(
     async def run():
         try:
             await cron.start()
+            await cron.execute_missed()
             await heartbeat.start()
             await asyncio.gather(
                 agent.run(),

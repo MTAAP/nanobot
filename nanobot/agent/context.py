@@ -101,12 +101,14 @@ class ContextBuilder:
         workspace: Path,
         memory_enabled: bool = False,
         core_memory: Any = None,
+        timezone: str = "UTC",
     ):
         self.workspace = workspace
         self.memory = MemoryStore(workspace)
         self.skills = SkillsLoader(workspace)
         self.memory_enabled = memory_enabled
         self.core_memory = core_memory
+        self.timezone = timezone
         self.self_evolve_enabled = False
         self._ensure_tools_md()
 
@@ -210,8 +212,12 @@ Skills with available="false" need dependencies installed first - you can try in
     def _get_identity(self) -> str:
         """Get the core identity section, loading from IDENTITY.md if available."""
         from datetime import datetime
+        from zoneinfo import ZoneInfo
 
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
+        tz = ZoneInfo(self.timezone)
+        now = datetime.now(tz).strftime("%Y-%m-%d %H:%M (%A)")
+        if self.timezone != "UTC":
+            now = f"{now} [{self.timezone}]"
         workspace_path = str(self.workspace.expanduser().resolve())
 
         # Try to load identity from IDENTITY.md

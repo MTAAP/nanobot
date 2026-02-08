@@ -257,6 +257,7 @@ class AgentDefaults(BaseModel):
     workspace: str = "~/.nanobot/workspace"
     model: str = "anthropic/claude-opus-4-5"
     provider: str | None = None  # Named provider from providers section
+    timezone: str = "UTC"  # User's timezone, e.g. "Europe/Berlin", "America/New_York"
     max_tokens: int = 8192
     temperature: float = 0.7
     tool_temperature: float = Field(default=0.0, alias="toolTemperature")

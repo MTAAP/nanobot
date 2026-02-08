@@ -3,6 +3,7 @@
 import time
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from loguru import logger
 
@@ -23,9 +24,15 @@ class CronTool(Tool):
     MAX_JOBS = 50
     MIN_INTERVAL_SECONDS = 60
 
-    def __init__(self, cron_service: "CronService", vector_store: Any = None):
+    def __init__(
+        self,
+        cron_service: "CronService",
+        vector_store: Any = None,
+        default_timezone: str = "UTC",
+    ):
         self._service = cron_service
         self._vector_store = vector_store
+        self._default_timezone = default_timezone
         self._context_channel: str | None = None
         self._context_chat_id: str | None = None
 
@@ -177,13 +184,13 @@ class CronTool(Tool):
             else:
                 sched = "one-time"
 
-            # Format next run
+            # Format next run in configured timezone
             next_run = "N/A"
             if job.state.next_run_at_ms:
-                next_time = time.strftime(
-                    "%Y-%m-%d %H:%M", time.localtime(job.state.next_run_at_ms / 1000)
+                tz = ZoneInfo(self._default_timezone)
+                next_run = datetime.fromtimestamp(job.state.next_run_at_ms / 1000, tz=tz).strftime(
+                    "%Y-%m-%d %H:%M"
                 )
-                next_run = next_time
 
             status = "enabled" if job.enabled else "disabled"
             delivery = ""
@@ -242,19 +249,25 @@ class CronTool(Tool):
                 return "Error: 'at_time' is required for schedule_type='at'"
             try:
                 dt = datetime.fromisoformat(at_time)
+                if dt.tzinfo is None:
+                    # Interpret naive datetime in user's configured timezone
+                    dt = dt.replace(tzinfo=ZoneInfo(timezone or self._default_timezone))
                 at_ms = int(dt.timestamp() * 1000)
             except ValueError as e:
                 return f"Error: Invalid at_time format: {e}"
             if at_ms <= now_ms:
                 return "Error: at_time must be in the future"
-            schedule = CronSchedule(kind="at", at_ms=at_ms, tz=timezone)
+            tz_name = timezone or self._default_timezone
+            schedule = CronSchedule(kind="at", at_ms=at_ms, tz=tz_name)
 
         elif schedule_type == "every":
             if not every_seconds:
                 return "Error: 'every_seconds' is required for schedule_type='every'"
             if every_seconds < self.MIN_INTERVAL_SECONDS:
                 return f"Error: Minimum interval is {self.MIN_INTERVAL_SECONDS} seconds"
-            schedule = CronSchedule(kind="every", every_ms=every_seconds * 1000, tz=timezone)
+            schedule = CronSchedule(
+                kind="every", every_ms=every_seconds * 1000, tz=timezone or self._default_timezone
+            )
 
         elif schedule_type == "cron":
             if not cron_expr:
@@ -268,7 +281,9 @@ class CronTool(Tool):
                 return "Error: croniter package not installed for cron expressions"
             except Exception as e:
                 return f"Error: Invalid cron expression: {e}"
-            schedule = CronSchedule(kind="cron", expr=cron_expr, tz=timezone)
+            schedule = CronSchedule(
+                kind="cron", expr=cron_expr, tz=timezone or self._default_timezone
+            )
 
         else:
             return f"Error: Invalid schedule_type '{schedule_type}'"
