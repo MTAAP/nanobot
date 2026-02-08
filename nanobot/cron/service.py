@@ -42,6 +42,7 @@ class CronService:
         self.store_path = store_path  # Legacy JSON path (for migration)
         self.on_job = on_job
         self._running = False
+        self._missed_jobs: list[str] = []
 
         # SQLite paths
         data_dir = store_path.parent
@@ -107,6 +108,18 @@ class CronService:
         job_count = self._count_jobs()
         logger.info(f"Cron service started with {job_count} jobs (APScheduler + SQLite)")
 
+    async def execute_missed(self) -> None:
+        """Execute any 'at' jobs that were missed during downtime.
+
+        Only runs jobs whose last_status is None (never executed).
+        """
+        for job_id in self._missed_jobs:
+            job = self._load_job_metadata(job_id)
+            if job and job.enabled and job.state.last_status is None:
+                logger.info(f"Cron: executing missed job '{job.name}' ({job_id})")
+                await self._execute_job(job)
+        self._missed_jobs.clear()
+
     def stop(self) -> None:
         """Stop the cron service."""
         self._running = False
@@ -164,11 +177,18 @@ class CronService:
             logger.error(f"Migration failed: {e}")
 
     def _sync_scheduler(self) -> None:
-        """Register all enabled jobs with APScheduler."""
+        """Register all enabled jobs with APScheduler.
+
+        Past "at" jobs that never executed are collected into _missed_jobs
+        for later recovery via execute_missed().
+        """
         assert self._db and self._scheduler
-        cursor = self._db.execute("SELECT id, schedule_json FROM cron_jobs WHERE enabled = 1")
+        self._missed_jobs.clear()
+        cursor = self._db.execute(
+            "SELECT id, schedule_json, last_status FROM cron_jobs WHERE enabled = 1"
+        )
         for row in cursor.fetchall():
-            job_id, schedule_json = row
+            job_id, schedule_json, last_status = row
             schedule = self._parse_schedule(json.loads(schedule_json))
             trigger = self._make_trigger(schedule)
             if trigger:
@@ -183,6 +203,9 @@ class CronService:
                         args=[job_id],
                         replace_existing=True,
                     )
+            elif schedule.kind == "at" and schedule.at_ms and last_status is None:
+                # Past "at" job that never ran -- queue for recovery
+                self._missed_jobs.append(job_id)
 
     def _make_trigger(
         self, schedule: CronSchedule
@@ -471,8 +494,16 @@ class CronService:
         to: str | None = None,
         delete_after_run: bool = False,
     ) -> CronJob:
-        """Add a new job."""
+        """Add a new job. Skips creation if a job with the same name already exists."""
         self._ensure_db()
+
+        # Dedup: return existing job if name matches (case-insensitive)
+        existing = self.list_jobs(include_disabled=False)
+        for j in existing:
+            if j.name.lower() == name.lower():
+                logger.warning(f"Cron: job '{name}' already exists ({j.id}), skipping")
+                return j
+
         now = _now_ms()
         job = CronJob(
             id=str(uuid.uuid4())[:8],

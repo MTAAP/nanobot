@@ -150,6 +150,7 @@ class AgentLoop:
         guardrail_config: "GuardrailConfig | None" = None,
         temperature: float = 0.7,
         tool_temperature: float = 0.0,
+        timezone: str = "UTC",
     ):
         from nanobot.config.schema import (
             CompactionConfig,
@@ -204,9 +205,11 @@ class AgentLoop:
         # Proactive memory (initialized in _init_memory())
         self.proactive_memory = None
 
+        self.timezone = timezone
         self.context = ContextBuilder(
             workspace,
             memory_enabled=self.memory_config.enabled,
+            timezone=self.timezone,
         )
         self.sessions = SessionManager(workspace)
         self.tools = ToolRegistry()
@@ -312,7 +315,9 @@ class AgentLoop:
         if self.cron_service:
             from nanobot.agent.tools.cron import CronTool
 
-            self.tools.register(CronTool(cron_service=self.cron_service))
+            self.tools.register(
+                CronTool(cron_service=self.cron_service, default_timezone=self.timezone)
+            )
 
         # Discord config tool (if Discord channel is enabled)
         if self.channel_manager and "discord" in self.channel_manager.channels:
