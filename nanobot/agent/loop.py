@@ -1836,9 +1836,8 @@ class AgentLoop:
             )
 
             logger.info(
-                "Memory extraction initialized: model=%s, interval=%d",
-                cfg.extraction_model,
-                cfg.extraction_interval,
+                f"Memory extraction initialized: model={cfg.extraction_model}, "
+                f"interval={cfg.extraction_interval}",
             )
         except Exception as e:
             logger.warning("Failed to initialize memory extraction: %s", e)
