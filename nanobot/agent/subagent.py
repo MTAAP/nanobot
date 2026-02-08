@@ -219,7 +219,7 @@ class SubagentManager:
                     # Execute tools
                     for tool_call in response.tool_calls:
                         logger.debug(f"Subagent [{task_id}] executing: {tool_call.name}")
-                        if self._progress_callback:
+                        if self._progress_callback and not silent:
                             await self._progress_callback(
                                 ProgressEvent(
                                     channel=origin["channel"],
@@ -231,7 +231,7 @@ class SubagentManager:
                                 )
                             )
                         result = await tools.execute(tool_call.name, tool_call.arguments)
-                        if self._progress_callback:
+                        if self._progress_callback and not silent:
                             status = (
                                 "error"
                                 if isinstance(result, str) and result.startswith("Error")
