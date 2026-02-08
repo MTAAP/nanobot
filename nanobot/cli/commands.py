@@ -1,6 +1,7 @@
 """CLI commands for nanobot."""
 
 import asyncio
+import shutil
 from pathlib import Path
 
 import typer
@@ -1255,6 +1256,185 @@ def status():
         has_vllm = bool(p.vllm.api_base)
         vllm_status = f"[green]✓ {p.vllm.api_base}[/green]" if has_vllm else "[dim]not set[/dim]"
         console.print(f"vLLM/Local: {vllm_status}")
+
+
+# ============================================================================
+# Reset Command
+# ============================================================================
+
+
+def _dir_size(path: Path) -> int:
+    """Return total size in bytes of a directory tree, 0 if missing."""
+    if not path.exists():
+        return 0
+    return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
+
+
+def _fmt_size(size: int) -> str:
+    """Format byte size to human-readable string."""
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} B"
+
+
+def _collect_reset_targets(
+    *,
+    memory: bool,
+    sessions: bool,
+    workspace: bool,
+    data: bool,
+    media: bool,
+) -> list[tuple[str, Path, bool, int]]:
+    """Build list of (label, path, exists, size_bytes) for selected categories."""
+    from nanobot.config.loader import load_config
+
+    config = load_config()
+
+    targets: list[tuple[str, Path, bool, int]] = []
+
+    if memory:
+        mem_cfg = config.agents.defaults.memory
+        mem_dir = Path(mem_cfg.db_path).expanduser().parent
+        targets.append(("Memory DB", mem_dir, mem_dir.exists(), _dir_size(mem_dir)))
+        ws_mem = config.workspace_path / "memory"
+        targets.append(("Workspace memory", ws_mem, ws_mem.exists(), _dir_size(ws_mem)))
+
+    if sessions:
+        sess_dir = Path.home() / ".nanobot" / "sessions"
+        targets.append(("Sessions", sess_dir, sess_dir.exists(), _dir_size(sess_dir)))
+
+    if workspace:
+        ws_dir = config.workspace_path
+        targets.append(("Workspace", ws_dir, ws_dir.exists(), _dir_size(ws_dir)))
+
+    if data:
+        data_dir = Path.home() / ".nanobot" / "data"
+        targets.append(("Data", data_dir, data_dir.exists(), _dir_size(data_dir)))
+
+    if media:
+        media_dir = Path.home() / ".nanobot" / "media"
+        targets.append(("Media", media_dir, media_dir.exists(), _dir_size(media_dir)))
+
+    return targets
+
+
+@app.command()
+def reset(
+    all_: bool = typer.Option(False, "--all", help="Reset everything (except config)"),
+    memory: bool = typer.Option(
+        False, "--memory", help="Clear vector DB, entities, core memory, daily notes"
+    ),
+    sessions: bool = typer.Option(False, "--sessions", help="Clear conversation history"),
+    workspace: bool = typer.Option(
+        False, "--workspace", help="Clear workspace files and re-create templates"
+    ),
+    data: bool = typer.Option(False, "--data", help="Clear cron jobs, follow-ups, usage tracking"),
+    media: bool = typer.Option(False, "--media", help="Clear downloaded media attachments"),
+    force: bool = typer.Option(False, "--force", "-f", help="Skip confirmation prompt"),
+):
+    """Reset nanobot data stores. Config is never touched."""
+    if not any([all_, memory, sessions, workspace, data, media]):
+        console.print("[yellow]No reset flags specified.[/yellow]")
+        console.print(
+            "Use --all to reset everything, or pick categories:\n"
+            "  --memory     Vector DB, entities, core memory, daily notes\n"
+            "  --sessions   Conversation history\n"
+            "  --workspace  Workspace files (re-creates templates)\n"
+            "  --data       Cron jobs, follow-ups, usage tracking\n"
+            "  --media      Downloaded media attachments\n"
+            "\nAdd --force / -f to skip confirmation."
+        )
+        raise typer.Exit()
+
+    if all_:
+        memory = sessions = workspace = data = media = True
+
+    targets = _collect_reset_targets(
+        memory=memory,
+        sessions=sessions,
+        workspace=workspace,
+        data=data,
+        media=media,
+    )
+
+    # Show what will be deleted
+    table = Table(title="Targets to reset")
+    table.add_column("Category", style="cyan")
+    table.add_column("Path")
+    table.add_column("Status")
+    table.add_column("Size", justify="right")
+
+    total_size = 0
+    any_exist = False
+    for label, path, exists, size in targets:
+        status = "[green]exists[/green]" if exists else "[dim]not found[/dim]"
+        table.add_row(label, str(path), status, _fmt_size(size) if exists else "-")
+        if exists:
+            total_size += size
+            any_exist = True
+
+    console.print(table)
+
+    if not any_exist:
+        console.print("\nNothing to reset — all target directories are already clean.")
+        raise typer.Exit()
+
+    console.print(f"\nTotal: {_fmt_size(total_size)}")
+
+    if not force:
+        if not typer.confirm("Proceed with reset?"):
+            console.print("Aborted.")
+            raise typer.Exit()
+
+    # Execute deletions
+    cleared: list[str] = []
+    for label, path, exists, _ in targets:
+        if not exists:
+            continue
+        try:
+            shutil.rmtree(path)
+            cleared.append(label)
+            console.print(f"  [red]Removed[/red] {path}")
+        except OSError as e:
+            console.print(f"  [red]Failed to remove {path}: {e}[/red]")
+
+    # Re-create directories so the bot doesn't crash on next start
+    if memory:
+        from nanobot.config.loader import load_config
+
+        config = load_config()
+        mem_dir = Path(config.agents.defaults.memory.db_path).expanduser().parent
+        mem_dir.mkdir(parents=True, exist_ok=True)
+        ws_mem = config.workspace_path / "memory"
+        ws_mem.mkdir(parents=True, exist_ok=True)
+
+    if workspace:
+        from nanobot.config.loader import load_config
+
+        config = load_config()
+        ws_dir = config.workspace_path
+        ws_dir.mkdir(parents=True, exist_ok=True)
+        _create_workspace_templates(ws_dir)
+        console.print("  [green]Re-created workspace templates[/green]")
+
+    if sessions:
+        sess_dir = Path.home() / ".nanobot" / "sessions"
+        sess_dir.mkdir(parents=True, exist_ok=True)
+
+    if data:
+        data_dir = Path.home() / ".nanobot" / "data"
+        data_dir.mkdir(parents=True, exist_ok=True)
+
+    if media:
+        media_dir = Path.home() / ".nanobot" / "media"
+        media_dir.mkdir(parents=True, exist_ok=True)
+
+    if cleared:
+        console.print(f"\n[green]Reset complete:[/green] {', '.join(cleared)}")
+    else:
+        console.print("\nNo directories were removed.")
 
 
 if __name__ == "__main__":

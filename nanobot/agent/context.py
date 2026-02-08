@@ -222,6 +222,10 @@ Skills with available="false" need dependencies installed first - you can try in
 - Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
 
+**IMPORTANT**: Only create files inside your workspace. Never create nested workspace
+directories (e.g. `workspace/temp/workspace/`). For code modifications, use the
+`self_evolve` tool which manages its own repo clone.
+
 {self._get_capabilities_section(workspace_path)}
 
 {self._get_tool_usage_section(workspace_path)}"""
@@ -249,6 +253,10 @@ Your workspace is at: {workspace_path}
 - Memory files: {workspace_path}/memory/MEMORY.md
 - Daily notes: {workspace_path}/memory/YYYY-MM-DD.md
 - Custom skills: {workspace_path}/skills/{{skill-name}}/SKILL.md
+
+**IMPORTANT**: Only create files inside your workspace. Never create nested workspace
+directories (e.g. `workspace/temp/workspace/`). For code modifications, use the
+`self_evolve` tool which manages its own repo clone.
 
 {self._get_capabilities_section(workspace_path)}
 
