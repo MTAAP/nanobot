@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING
 import discord
 from loguru import logger
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.progress import ProgressEvent, ProgressKind
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import DiscordConfig
@@ -47,6 +48,12 @@ class DiscordChannel(BaseChannel):
         self._processing_messages: dict[int, tuple[int, "DiscordMessage"]] = {}
         # Track typing indicator tasks
         self._typing_tasks: dict[int, asyncio.Task] = {}
+        # Track sent messages for edit support (chat_id -> last message)
+        self._sent_messages: dict[str, discord.Message] = {}
+        # Track progress status messages per chat
+        self._progress_messages: dict[str, discord.Message] = {}
+        # Track active threads for long-running tasks
+        self._active_threads: dict[str, discord.Thread] = {}
 
     async def start(self) -> None:
         """Start the Discord bot with WebSocket gateway connection."""
@@ -206,9 +213,26 @@ class DiscordChannel(BaseChannel):
                 logger.error(f"Channel {channel_id} is not a text channel")
                 return
 
+            # Delegate to edit() if this is an edit request
+            if msg.edit_message_id:
+                await self.edit(msg)
+                return
+
+            # Clean up progress message for this chat
+            progress_key = f"{msg.channel}:{msg.chat_id}"
+            progress_msg = self._progress_messages.pop(progress_key, None)
+            if progress_msg:
+                try:
+                    await progress_msg.delete()
+                except (discord.NotFound, discord.HTTPException):
+                    pass
+
             # Send as reply to original message (if we have it)
             content = msg.content
-            await self._send_message(channel, content, reply_to=original_message)
+            view = None
+            if msg.components:
+                view = self._build_discord_view(msg.components, msg.chat_id)
+            await self._send_message(channel, content, reply_to=original_message, view=view)
 
             # Mark complete AFTER message is sent (updates reaction and stops typing)
             if original_msg_id:
@@ -222,6 +246,180 @@ class DiscordChannel(BaseChannel):
             logger.error(f"Invalid channel_id: {channel_id}")
         except Exception as e:
             logger.error(f"Error sending Discord message: {e}")
+
+    async def on_progress(self, event: ProgressEvent) -> None:
+        """Display progress events as an updating status embed."""
+        if not self._client or not self._client.is_ready():
+            return
+
+        key = f"{event.channel}:{event.chat_id}"
+
+        try:
+            channel = self._client.get_channel(int(event.chat_id))
+            if not isinstance(channel, discord.TextChannel):
+                return
+
+            # Route long-running tasks to a thread
+            threshold = getattr(self.config, "auto_thread_threshold", 3)
+            if event.iteration > threshold:
+                thread_key = f"thread:{key}"
+                if thread_key not in self._active_threads:
+                    try:
+                        thread = await self._create_thread(
+                            channel, f"Processing ({event.chat_id[:8]}...)"
+                        )
+                        self._active_threads[thread_key] = thread
+                    except Exception as e:
+                        logger.debug(f"Thread creation failed: {e}")
+                if thread_key in self._active_threads:
+                    channel = self._active_threads[thread_key]
+
+            # Build status line from event
+            if event.kind == ProgressKind.THINKING:
+                status = f"Thinking... (step {event.iteration}/{event.total_iterations})"
+            elif event.kind == ProgressKind.TOOL_START:
+                status = f"Running `{event.tool_name}`..."
+            elif event.kind == ProgressKind.TOOL_COMPLETE:
+                status = f"`{event.tool_name}` {event.detail}"
+            elif event.kind == ProgressKind.STREAMING:
+                status = "Generating response..."
+            elif event.kind == ProgressKind.ERROR:
+                status = f"Error: {event.detail}"
+            else:
+                status = event.detail or event.kind.value
+
+            embed = discord.Embed(
+                description=status,
+                color=0x5865F2,
+            )
+            embed.set_footer(text="Processing")
+
+            if key in self._progress_messages:
+                try:
+                    await self._progress_messages[key].edit(embed=embed)
+                except (discord.NotFound, discord.HTTPException):
+                    self._progress_messages.pop(key, None)
+            else:
+                msg = await channel.send(embed=embed)
+                self._progress_messages[key] = msg
+
+        except Exception as e:
+            logger.debug(f"Progress display failed: {e}")
+
+    async def edit(self, msg: OutboundMessage) -> None:
+        """Edit a previously sent message by edit_message_id."""
+        if not self._client or not self._client.is_ready():
+            return
+
+        if not msg.edit_message_id:
+            return
+
+        try:
+            channel = self._client.get_channel(int(msg.chat_id))
+            if not isinstance(channel, discord.TextChannel):
+                return
+
+            message = await channel.fetch_message(int(msg.edit_message_id))
+            if len(msg.content) <= self.MESSAGE_MAX_LENGTH:
+                await message.edit(content=msg.content)
+            else:
+                # Switch to embed for long content
+                embed = self._create_embed(msg.content)
+                await message.edit(content=None, embed=embed)
+
+        except discord.NotFound:
+            logger.debug(f"Message {msg.edit_message_id} not found for edit")
+        except Exception as e:
+            logger.warning(f"Failed to edit Discord message: {e}")
+
+    def _build_discord_view(self, components: list[dict], chat_id: str) -> discord.ui.View:
+        """Build a Discord UI View from component definitions."""
+        view = discord.ui.View(timeout=300)
+
+        for comp in components:
+            if comp.get("type") == "button":
+                button = discord.ui.Button(
+                    label=comp.get("label", ""),
+                    custom_id=comp.get("callback_data", ""),
+                    style=discord.ButtonStyle.primary,
+                )
+
+                callback_data = comp.get("callback_data", "")
+                bus = self.bus
+                channel_name = self.name
+
+                async def button_callback(
+                    interaction: discord.Interaction,
+                    data: str = callback_data,
+                ) -> None:
+                    await interaction.response.defer()
+                    sender_id = str(interaction.user.id)
+                    if interaction.user.name:
+                        sender_id = f"{sender_id}|{interaction.user.name}"
+                    await bus.publish_inbound(
+                        InboundMessage(
+                            channel=channel_name,
+                            sender_id=sender_id,
+                            chat_id=chat_id,
+                            content=data,
+                        )
+                    )
+
+                button.callback = button_callback
+                view.add_item(button)
+
+            elif comp.get("type") == "select":
+                options = [
+                    discord.SelectOption(
+                        label=opt.get("label", ""),
+                        value=opt.get("value", ""),
+                    )
+                    for opt in comp.get("options", [])
+                ]
+                select = discord.ui.Select(
+                    placeholder=comp.get("placeholder", "Choose..."),
+                    options=options or [discord.SelectOption(label="None", value="none")],
+                )
+
+                bus = self.bus
+                channel_name = self.name
+
+                async def select_callback(
+                    interaction: discord.Interaction,
+                    s: discord.ui.Select = select,
+                ) -> None:
+                    await interaction.response.defer()
+                    sender_id = str(interaction.user.id)
+                    if interaction.user.name:
+                        sender_id = f"{sender_id}|{interaction.user.name}"
+                    value = s.values[0] if s.values else ""
+                    await bus.publish_inbound(
+                        InboundMessage(
+                            channel=channel_name,
+                            sender_id=sender_id,
+                            chat_id=chat_id,
+                            content=value,
+                        )
+                    )
+
+                select.callback = select_callback
+                view.add_item(select)
+
+        return view
+
+    async def _create_thread(
+        self,
+        channel: discord.TextChannel,
+        name: str,
+        message: discord.Message | None = None,
+    ) -> discord.Thread:
+        """Create a thread for complex task updates."""
+        thread = await channel.create_thread(
+            name=name,
+            message=message,
+            auto_archive_duration=60,
+        )
+        return thread
 
     async def _on_message(self, message: "DiscordMessage") -> None:
         """Handle incoming Discord messages."""
@@ -425,13 +623,14 @@ class DiscordChannel(BaseChannel):
         channel: discord.TextChannel,
         content: str,
         reply_to: "DiscordMessage | None" = None,
+        view: discord.ui.View | None = None,
     ) -> None:
         """Send a message, splitting if it exceeds Discord's 2000 char limit."""
         if len(content) <= self.MESSAGE_MAX_LENGTH:
             if reply_to:
-                await channel.send(content, reference=reply_to)
+                await channel.send(content, reference=reply_to, view=view)
             else:
-                await channel.send(content)
+                await channel.send(content, view=view)
         else:
             chunks = self._split_content(content, self.MESSAGE_MAX_LENGTH)
             for i, chunk in enumerate(chunks):

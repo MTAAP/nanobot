@@ -41,6 +41,16 @@ class DeliveryQueue:
                 error TEXT
             )
         """)
+        # Migrate schema: add new columns if they don't exist yet
+        for col, col_type in [
+            ("edit_message_id", "TEXT"),
+            ("thread_id", "TEXT"),
+            ("components_json", "TEXT"),
+        ]:
+            try:
+                self._db.execute(f"ALTER TABLE outbound_queue ADD COLUMN {col} {col_type}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
         self._db.commit()
 
     def enqueue(self, msg: OutboundMessage) -> str:
@@ -49,8 +59,9 @@ class DeliveryQueue:
         self._db.execute(
             "INSERT INTO outbound_queue"
             " (id, channel, chat_id, content, reply_to,"
-            "  media_json, metadata_json, status, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            "  media_json, metadata_json, edit_message_id,"
+            "  thread_id, components_json, status, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
             (
                 delivery_id,
                 msg.channel,
@@ -59,6 +70,9 @@ class DeliveryQueue:
                 msg.reply_to,
                 json.dumps(msg.media) if msg.media else None,
                 json.dumps(msg.metadata) if msg.metadata else None,
+                msg.edit_message_id,
+                msg.thread_id,
+                json.dumps(msg.components) if msg.components else None,
                 time.time(),
             ),
         )
@@ -70,7 +84,8 @@ class DeliveryQueue:
         now = time.time()
         rows = self._db.execute(
             "SELECT id, channel, chat_id, content, reply_to,"
-            "       media_json, metadata_json"
+            "       media_json, metadata_json, edit_message_id,"
+            "       thread_id, components_json"
             " FROM outbound_queue"
             " WHERE status IN ('pending', 'retry')"
             "   AND next_retry_at <= ?"
@@ -81,9 +96,21 @@ class DeliveryQueue:
 
         results = []
         for row in rows:
-            did, channel, chat_id, content, reply_to, med_json, meta_json = row
+            (
+                did,
+                channel,
+                chat_id,
+                content,
+                reply_to,
+                med_json,
+                meta_json,
+                edit_msg_id,
+                thread_id,
+                comp_json,
+            ) = row
             media = json.loads(med_json) if med_json else []
             metadata = json.loads(meta_json) if meta_json else {}
+            components = json.loads(comp_json) if comp_json else []
             msg = OutboundMessage(
                 channel=channel,
                 chat_id=chat_id,
@@ -91,6 +118,9 @@ class DeliveryQueue:
                 reply_to=reply_to,
                 media=media,
                 metadata=metadata,
+                edit_message_id=edit_msg_id,
+                thread_id=thread_id,
+                components=components,
             )
             self._db.execute(
                 "UPDATE outbound_queue SET status = 'in_flight' WHERE id = ?",

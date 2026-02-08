@@ -51,6 +51,7 @@ class DiscordConfig(BaseModel):
     trigger_word: str = "nano"  # Respond when this word appears in messages
     allow_from: list[str] = Field(default_factory=list)  # Allowed user IDs
     context_messages: int = Field(default=0, alias="contextMessages")  # Recent channel messages
+    auto_thread_threshold: int = Field(default=3, alias="autoThreadThreshold")
     # Reaction emojis (customizable)
     emoji_processing: str = "\u23f3"  # Hourglass
     emoji_complete: str = "\u2705"  # Checkmark
@@ -145,6 +146,40 @@ class MemoryExtractionConfig(BaseModel):
     candidate_threshold: float = Field(default=0.7, alias="candidateThreshold")
 
 
+class StreamingConfig(BaseModel):
+    """Streaming response configuration."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = True
+    edit_interval_ms: int = Field(default=1500, alias="editIntervalMs")
+    min_chunk_chars: int = Field(default=50, alias="minChunkChars")
+
+
+class RetryConfig(BaseModel):
+    """LLM retry configuration."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    max_retries: int = Field(default=3, alias="maxRetries")
+    base_delay_s: float = Field(default=1.0, alias="baseDelayS")
+
+
+class TracingConfig(BaseModel):
+    """Observability tracing configuration."""
+
+    enabled: bool = False
+
+
+class GuardrailConfig(BaseModel):
+    """Tool execution guardrail configuration."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    enabled: bool = False
+    timeout_s: int = Field(default=60, alias="timeoutS")
+
+
 class IntentConfig(BaseModel):
     """Query intent classification configuration."""
 
@@ -231,6 +266,10 @@ class AgentDefaults(BaseModel):
     memory_extraction: MemoryExtractionConfig = Field(
         default_factory=MemoryExtractionConfig, alias="memoryExtraction"
     )
+    streaming: StreamingConfig = Field(default_factory=StreamingConfig)
+    retry: RetryConfig = Field(default_factory=RetryConfig)
+    tracing: TracingConfig = Field(default_factory=TracingConfig)
+    guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
     daemon: DaemonConfig = Field(default_factory=DaemonConfig, alias="daemon")
     intent: IntentConfig = Field(default_factory=IntentConfig)
 

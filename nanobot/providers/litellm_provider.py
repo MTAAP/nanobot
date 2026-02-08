@@ -1,12 +1,19 @@
 """LiteLLM provider implementation for multi-provider support."""
 
+import json
 import os
+from collections.abc import AsyncIterator
 from typing import Any
 
 import litellm
 from litellm import acompletion
 
-from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import (
+    LLMProvider,
+    LLMResponse,
+    StreamChunk,
+    ToolCallRequest,
+)
 
 # Data-driven prefix rules for model routing.
 # Each entry: (model_keywords, litellm_prefix, skip_if_already_prefixed)
@@ -129,6 +136,7 @@ class LiteLLMProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.7,
         tool_choice: str | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request via LiteLLM.
@@ -166,8 +174,13 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools
             kwargs["tool_choice"] = tool_choice or "auto"
 
+        if response_format:
+            kwargs["response_format"] = response_format
+
         try:
-            response = await acompletion(**kwargs)
+            from nanobot.providers.retry import with_retry
+
+            response = await with_retry(acompletion, **kwargs)
             return self._parse_response(response)
         except Exception as e:
             # Return error as content for graceful handling
@@ -187,8 +200,6 @@ class LiteLLMProvider(LLMProvider):
                 # Parse arguments from JSON string if needed
                 args = tc.function.arguments
                 if isinstance(args, str):
-                    import json
-
                     try:
                         args = json.loads(args)
                     except json.JSONDecodeError:
@@ -221,6 +232,114 @@ class LiteLLMProvider(LLMProvider):
             finish_reason=choice.finish_reason or "stop",
             usage=usage,
         )
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        tool_choice: str | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream a chat completion response via LiteLLM."""
+        model = self._apply_model_prefix(model or self.default_model)
+
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+
+        if self.api_key:
+            kwargs["api_key"] = self.api_key
+        if self.api_base:
+            kwargs["api_base"] = self.api_base
+        if self.extra_headers:
+            kwargs["extra_headers"] = self.extra_headers
+
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = tool_choice or "auto"
+
+        if response_format:
+            kwargs["response_format"] = response_format
+
+        try:
+            from nanobot.providers.retry import with_retry
+
+            response = await with_retry(acompletion, **kwargs)
+
+            # Accumulate tool call deltas across chunks
+            tool_call_acc: dict[int, dict[str, Any]] = {}
+            usage: dict[str, int] = {}
+
+            async for chunk in response:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                finish_reason = chunk.choices[0].finish_reason if chunk.choices else None
+
+                content = ""
+                if delta and delta.content:
+                    content = delta.content
+
+                # Accumulate tool call deltas
+                if delta and hasattr(delta, "tool_calls") and delta.tool_calls:
+                    for tc_delta in delta.tool_calls:
+                        idx = tc_delta.index
+                        if idx not in tool_call_acc:
+                            tool_call_acc[idx] = {
+                                "id": tc_delta.id or "",
+                                "name": "",
+                                "arguments": "",
+                            }
+                        if tc_delta.id:
+                            tool_call_acc[idx]["id"] = tc_delta.id
+                        if tc_delta.function:
+                            if tc_delta.function.name:
+                                tool_call_acc[idx]["name"] = tc_delta.function.name
+                            if tc_delta.function.arguments:
+                                tool_call_acc[idx]["arguments"] += tc_delta.function.arguments
+
+                # Capture usage from final chunk
+                if hasattr(chunk, "usage") and chunk.usage:
+                    usage = {
+                        "prompt_tokens": chunk.usage.prompt_tokens,
+                        "completion_tokens": chunk.usage.completion_tokens,
+                        "total_tokens": chunk.usage.total_tokens,
+                    }
+
+                # Build completed tool calls on finish
+                completed_tools: list[ToolCallRequest] = []
+                if finish_reason and tool_call_acc:
+                    for acc in tool_call_acc.values():
+                        args_str = acc["arguments"]
+                        try:
+                            args = json.loads(args_str) if args_str else {}
+                        except json.JSONDecodeError:
+                            continue
+                        completed_tools.append(
+                            ToolCallRequest(
+                                id=acc["id"],
+                                name=acc["name"],
+                                arguments=args,
+                            )
+                        )
+
+                yield StreamChunk(
+                    content=content,
+                    tool_calls=completed_tools,
+                    finish_reason=finish_reason,
+                    usage=usage if finish_reason else {},
+                )
+
+        except Exception as e:
+            yield StreamChunk(
+                content=f"Error streaming LLM: {str(e)}",
+                finish_reason="error",
+            )
 
     def get_default_model(self) -> str:
         """Get the default model."""

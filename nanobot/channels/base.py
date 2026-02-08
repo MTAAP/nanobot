@@ -1,10 +1,13 @@
 """Base channel interface for chat platforms."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.queue import MessageBus
+
+if TYPE_CHECKING:
+    from nanobot.bus.progress import ProgressEvent
 
 
 class BaseChannel(ABC):
@@ -54,6 +57,14 @@ class BaseChannel(ABC):
         Args:
             msg: The message to send.
         """
+        pass
+
+    async def on_progress(self, event: "ProgressEvent") -> None:
+        """Handle progress events. Override in subclasses for live feedback."""
+        pass
+
+    async def edit(self, msg: OutboundMessage) -> None:
+        """Edit a previously sent message. Override in subclasses."""
         pass
 
     def is_allowed(self, sender_id: str) -> bool:

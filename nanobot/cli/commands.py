@@ -236,6 +236,9 @@ def gateway(
         registry=registry,
         daemon_config=daemon_cfg,
         intent_config=config.agents.defaults.intent,
+        streaming_config=config.agents.defaults.streaming,
+        tracing_config=config.agents.defaults.tracing,
+        guardrail_config=config.agents.defaults.guardrails,
         temperature=config.agents.defaults.temperature,
         tool_temperature=config.agents.defaults.tool_temperature,
     )
@@ -434,6 +437,9 @@ def agent(
         memory_extraction=config.agents.defaults.memory_extraction,
         restrict_to_workspace=config.tools.restrict_to_workspace,
         intent_config=config.agents.defaults.intent,
+        streaming_config=config.agents.defaults.streaming,
+        tracing_config=config.agents.defaults.tracing,
+        guardrail_config=config.agents.defaults.guardrails,
     )
 
     if message:
@@ -1109,6 +1115,96 @@ def memory_export(
         encoding="utf-8",
     )
     console.print(f"[green]Exported {len(entries)} entries to {output}[/green]")
+
+
+# ============================================================================
+# Usage / Cost Commands
+# ============================================================================
+
+usage_app = typer.Typer(help="Token usage and cost tracking")
+app.add_typer(usage_app, name="usage")
+
+# Rough cost estimates per 1k tokens (blended input/output)
+_COST_PER_1K: dict[str, float] = {
+    "gpt-4o": 0.005,
+    "gpt-4o-mini": 0.00015,
+    "claude-3-5-sonnet": 0.003,
+    "claude-3-5-haiku": 0.0008,
+    "claude-sonnet-4": 0.003,
+    "claude-haiku-4": 0.0008,
+    "claude-opus-4": 0.015,
+}
+
+
+def _estimate_cost(model: str, total_tokens: int) -> float:
+    """Estimate cost based on model and token count."""
+    model_lower = model.lower()
+    for prefix, rate in _COST_PER_1K.items():
+        if prefix in model_lower:
+            return total_tokens * rate / 1000
+    return total_tokens * 0.002 / 1000  # default
+
+
+@usage_app.command("summary")
+def usage_summary(
+    days: int = typer.Option(1, "--days", "-d", help="Number of days"),
+):
+    """Show token usage summary."""
+    from nanobot.agent.usage import UsageTracker
+
+    tracker = UsageTracker()
+    totals = tracker.get_daily_total(days)
+    tracker.close()
+
+    table = Table(title=f"Token Usage (last {days} day{'s' if days != 1 else ''})")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Tokens", justify="right")
+
+    table.add_row("Prompt", f"{totals['prompt_tokens']:,}")
+    table.add_row("Completion", f"{totals['completion_tokens']:,}")
+    table.add_row("Total", f"[bold]{totals['total_tokens']:,}[/bold]")
+
+    console.print(table)
+
+
+@usage_app.command("breakdown")
+def usage_breakdown(
+    days: int = typer.Option(7, "--days", "-d", help="Number of days"),
+):
+    """Show per-model token breakdown with cost estimates."""
+    from nanobot.agent.usage import UsageTracker
+
+    tracker = UsageTracker()
+    breakdown = tracker.get_model_breakdown(days)
+    tracker.close()
+
+    if not breakdown:
+        console.print("No usage data found.")
+        return
+
+    table = Table(title=f"Model Breakdown (last {days} days)")
+    table.add_column("Model", style="cyan")
+    table.add_column("Prompt", justify="right")
+    table.add_column("Completion", justify="right")
+    table.add_column("Total", justify="right")
+    table.add_column("Calls", justify="right")
+    table.add_column("Est. Cost", justify="right", style="green")
+
+    total_cost = 0.0
+    for row in breakdown:
+        cost = _estimate_cost(row["model"], row["total_tokens"])
+        total_cost += cost
+        table.add_row(
+            row["model"],
+            f"{row['prompt_tokens']:,}",
+            f"{row['completion_tokens']:,}",
+            f"{row['total_tokens']:,}",
+            str(row["calls"]),
+            f"${cost:.4f}",
+        )
+
+    console.print(table)
+    console.print(f"\nEstimated total cost: [bold green]${total_cost:.4f}[/bold green]")
 
 
 # ============================================================================

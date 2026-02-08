@@ -1,6 +1,7 @@
 """Base LLM provider interface."""
 
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -29,6 +30,16 @@ class LLMResponse:
         return len(self.tool_calls) > 0
 
 
+@dataclass
+class StreamChunk:
+    """A single chunk from a streaming LLM response."""
+
+    content: str = ""
+    tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    finish_reason: str | None = None
+    usage: dict[str, int] = field(default_factory=dict)
+
+
 class LLMProvider(ABC):
     """
     Abstract base class for LLM providers.
@@ -50,6 +61,7 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         temperature: float = 0.7,
         tool_choice: str | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         """
         Send a chat completion request.
@@ -67,6 +79,37 @@ class LLMProvider(ABC):
             LLMResponse with content and/or tool calls.
         """
         pass
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float = 0.7,
+        tool_choice: str | None = None,
+        response_format: dict[str, Any] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
+        """Stream a chat completion response.
+
+        Default implementation falls back to chat() and yields a single chunk.
+        Override in subclasses for true streaming support.
+        """
+        response = await self.chat(
+            messages=messages,
+            tools=tools,
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            tool_choice=tool_choice,
+            response_format=response_format,
+        )
+        yield StreamChunk(
+            content=response.content or "",
+            tool_calls=response.tool_calls,
+            finish_reason=response.finish_reason,
+            usage=response.usage,
+        )
 
     @abstractmethod
     def get_default_model(self) -> str:

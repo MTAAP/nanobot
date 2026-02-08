@@ -158,6 +158,9 @@ class ContextBuilder:
         if self.memory_enabled:
             parts.append(self._get_memory_instructions())
 
+        # Clarification guidance
+        parts.append(self._get_clarification_instructions())
+
         # Skills - progressive loading
         # 1. Always-loaded skills: include full content
         always_skills = self.skills.get_always_skills()
@@ -413,6 +416,29 @@ you MUST verify with the appropriate tool before presenting them as current trut
 Core memory is a small persistent scratchpad always visible in your
 context. Use `core_memory_update` to store important user info,
 preferences, and active project context. This avoids repeated lookups."""
+
+    def _get_clarification_instructions(self) -> str:
+        """Get instructions for when the agent should ask clarifying questions."""
+        return """# Clarification Protocol
+
+When to ask for clarification:
+- The request is ambiguous with multiple valid interpretations
+- A destructive or irreversible action is requested (deleting files, modifying configs)
+- Required parameters are missing and cannot be reasonably inferred
+- The task scope is unclear (could be simple fix or major refactor)
+
+How to clarify:
+- Ask ONE focused question at a time
+- Offer 2-3 concrete options when possible
+- Include your best guess: "I'll assume X unless you say otherwise"
+- Format options as a numbered list for easy selection
+
+When NOT to clarify:
+- Simple greetings or casual conversation
+- Clear, direct requests with obvious intent
+- Follow-up messages in an ongoing task
+- When context from conversation history makes intent obvious
+- When a reasonable default exists and the action is reversible"""
 
     def _is_bootstrap_stale(self) -> bool:
         """Check if any bootstrap files have been modified since last cache."""

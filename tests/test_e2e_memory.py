@@ -48,6 +48,7 @@ class FakeLLMProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.7,
         tool_choice: str | None = None,
+        response_format: dict[str, Any] | None = None,
     ) -> LLMResponse:
         self.call_count += 1
         last_user = ""

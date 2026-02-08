@@ -33,3 +33,6 @@ class OutboundMessage:
     reply_to: str | None = None
     media: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    edit_message_id: str | None = None
+    thread_id: str | None = None
+    components: list[dict[str, Any]] = field(default_factory=list)

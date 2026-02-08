@@ -13,6 +13,7 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage
+from nanobot.bus.progress import ProgressCallback, ProgressEvent, ProgressKind
 from nanobot.bus.queue import MessageBus
 from nanobot.providers.base import LLMProvider
 
@@ -41,6 +42,7 @@ class SubagentManager:
         exec_config: "ExecToolConfig | None" = None,
         registry: "AgentRegistry | None" = None,
         evolve_manager: "SelfEvolveManager | None" = None,
+        progress_callback: ProgressCallback | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig
 
@@ -52,6 +54,7 @@ class SubagentManager:
         self.exec_config = exec_config or ExecToolConfig()
         self._registry = registry
         self._evolve_manager = evolve_manager
+        self._progress_callback = progress_callback
         self._running_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def spawn(
@@ -212,7 +215,34 @@ class SubagentManager:
                     # Execute tools
                     for tool_call in response.tool_calls:
                         logger.debug(f"Subagent [{task_id}] executing: {tool_call.name}")
+                        if self._progress_callback:
+                            await self._progress_callback(
+                                ProgressEvent(
+                                    channel=origin["channel"],
+                                    chat_id=origin["chat_id"],
+                                    kind=ProgressKind.TOOL_START,
+                                    tool_name=tool_call.name,
+                                    detail=f"[subagent] Executing {tool_call.name}",
+                                    iteration=iteration,
+                                )
+                            )
                         result = await tools.execute(tool_call.name, tool_call.arguments)
+                        if self._progress_callback:
+                            status = (
+                                "error"
+                                if isinstance(result, str) and result.startswith("Error")
+                                else "ok"
+                            )
+                            await self._progress_callback(
+                                ProgressEvent(
+                                    channel=origin["channel"],
+                                    chat_id=origin["chat_id"],
+                                    kind=ProgressKind.TOOL_COMPLETE,
+                                    tool_name=tool_call.name,
+                                    detail=f"[subagent] {tool_call.name}: {status}",
+                                    iteration=iteration,
+                                )
+                            )
                         messages.append(
                             {
                                 "role": "tool",

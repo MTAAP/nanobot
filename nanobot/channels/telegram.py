@@ -4,10 +4,17 @@ import asyncio
 import re
 
 from loguru import logger
-from telegram import Update
-from telegram.ext import Application, ContextTypes, MessageHandler, filters
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
-from nanobot.bus.events import OutboundMessage
+from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.progress import ProgressEvent, ProgressKind
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.base import BaseChannel
 from nanobot.config.schema import TelegramConfig
@@ -93,6 +100,8 @@ class TelegramChannel(BaseChannel):
         self.groq_api_key = groq_api_key
         self._app: Application | None = None
         self._chat_ids: dict[str, int] = {}  # Map sender_id to chat_id for replies
+        # Track progress status messages per chat for edit-in-place
+        self._progress_messages: dict[str, int] = {}  # chat_id -> message_id
 
     async def start(self) -> None:
         """Start the Telegram bot with long polling."""
@@ -124,6 +133,7 @@ class TelegramChannel(BaseChannel):
         from telegram.ext import CommandHandler
 
         self._app.add_handler(CommandHandler("start", self._on_start))
+        self._app.add_handler(CallbackQueryHandler(self._on_callback_query))
 
         logger.info("Starting Telegram bot (polling mode)...")
 
@@ -137,7 +147,7 @@ class TelegramChannel(BaseChannel):
 
         # Start polling (this runs until stopped)
         await self._app.updater.start_polling(
-            allowed_updates=["message"],
+            allowed_updates=["message", "callback_query"],
             drop_pending_updates=True,  # Ignore old messages on startup
         )
 
@@ -162,12 +172,33 @@ class TelegramChannel(BaseChannel):
             logger.warning("Telegram bot not running")
             return
 
+        # Delegate to edit() if this is an edit request
+        if msg.edit_message_id:
+            await self.edit(msg)
+            return
+
         try:
-            # chat_id should be the Telegram chat ID (integer)
             chat_id = int(msg.chat_id)
+
+            # Clean up progress message for this chat
+            progress_msg_id = self._progress_messages.pop(msg.chat_id, None)
+            if progress_msg_id:
+                try:
+                    await self._app.bot.delete_message(chat_id=chat_id, message_id=progress_msg_id)
+                except Exception:
+                    pass
+
             # Convert markdown to Telegram HTML
             html_content = _markdown_to_telegram_html(msg.content)
-            await self._app.bot.send_message(chat_id=chat_id, text=html_content, parse_mode="HTML")
+            reply_markup = None
+            if msg.components:
+                reply_markup = self._build_telegram_keyboard(msg.components)
+            await self._app.bot.send_message(
+                chat_id=chat_id,
+                text=html_content,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
         except ValueError:
             logger.error(f"Invalid chat_id: {msg.chat_id}")
         except Exception as e:
@@ -177,6 +208,117 @@ class TelegramChannel(BaseChannel):
                 await self._app.bot.send_message(chat_id=int(msg.chat_id), text=msg.content)
             except Exception as e2:
                 logger.error(f"Error sending Telegram message: {e2}")
+
+    async def on_progress(self, event: ProgressEvent) -> None:
+        """Display progress events via typing indicator and status messages."""
+        if not self._app:
+            return
+
+        try:
+            chat_id = int(event.chat_id)
+            key = event.chat_id
+
+            # Send typing action for all progress events
+            await self._app.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+            # For multi-step processing, send/edit a status message
+            if event.kind in (
+                ProgressKind.TOOL_START,
+                ProgressKind.TOOL_COMPLETE,
+            ):
+                if event.kind == ProgressKind.TOOL_START:
+                    status = f"Running {event.tool_name}..."
+                else:
+                    status = f"{event.tool_name}: {event.detail}"
+
+                if key in self._progress_messages:
+                    try:
+                        await self._app.bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=self._progress_messages[key],
+                            text=status,
+                        )
+                    except Exception:
+                        self._progress_messages.pop(key, None)
+                elif event.iteration > 1:
+                    # Only show status message after first iteration
+                    sent = await self._app.bot.send_message(chat_id=chat_id, text=status)
+                    self._progress_messages[key] = sent.message_id
+
+        except Exception as e:
+            logger.debug(f"Telegram progress display failed: {e}")
+
+    async def edit(self, msg: OutboundMessage) -> None:
+        """Edit a previously sent Telegram message."""
+        if not self._app or not msg.edit_message_id:
+            return
+
+        try:
+            chat_id = int(msg.chat_id)
+            html_content = _markdown_to_telegram_html(msg.content)
+            await self._app.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=int(msg.edit_message_id),
+                text=html_content,
+                parse_mode="HTML",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to edit Telegram message: {e}")
+
+    def _build_telegram_keyboard(self, components: list[dict]) -> InlineKeyboardMarkup:
+        """Build Telegram inline keyboard from component definitions."""
+        keyboard = []
+        row: list[InlineKeyboardButton] = []
+
+        for comp in components:
+            if comp.get("type") == "button":
+                row.append(
+                    InlineKeyboardButton(
+                        text=comp.get("label", ""),
+                        callback_data=comp.get("callback_data", "")[:64],
+                    )
+                )
+            elif comp.get("type") == "select":
+                if row:
+                    keyboard.append(row)
+                    row = []
+                for opt in comp.get("options", []):
+                    keyboard.append(
+                        [
+                            InlineKeyboardButton(
+                                text=opt.get("label", ""),
+                                callback_data=opt.get("value", "")[:64],
+                            )
+                        ]
+                    )
+
+        if row:
+            keyboard.append(row)
+
+        return InlineKeyboardMarkup(keyboard)
+
+    async def _on_callback_query(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Handle inline keyboard callbacks."""
+        query = update.callback_query
+        if not query or not query.data:
+            return
+
+        await query.answer()
+
+        user = update.effective_user
+        chat_id = query.message.chat_id if query.message else 0
+        sender_id = str(user.id) if user else "unknown"
+        if user and user.username:
+            sender_id = f"{sender_id}|{user.username}"
+
+        await self.bus.publish_inbound(
+            InboundMessage(
+                channel=self.name,
+                sender_id=sender_id,
+                chat_id=str(chat_id),
+                content=query.data,
+            )
+        )
 
     async def _on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle /start command."""

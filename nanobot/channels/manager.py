@@ -33,6 +33,7 @@ class ChannelManager:
         self._delivery_queue.recover_in_flight()
 
         self._init_channels()
+        self._wire_progress_subscriptions()
 
     def _init_channels(self) -> None:
         """Initialize channels based on config."""
@@ -84,6 +85,12 @@ class ChannelManager:
                 logger.info("Discord channel enabled")
             except ImportError as e:
                 logger.warning(f"Discord channel not available: {e}")
+
+    def _wire_progress_subscriptions(self) -> None:
+        """Subscribe each channel's on_progress to the message bus."""
+        for name, channel in self.channels.items():
+            self.bus.subscribe_progress(name, channel.on_progress)
+            logger.debug(f"Wired progress subscription for {name}")
 
     async def start_all(self) -> None:
         """Start WhatsApp channel and the outbound dispatcher."""

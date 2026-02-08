@@ -2,12 +2,15 @@
 
 import asyncio
 import json
+import re
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder
+from nanobot.agent.guardrails import GuardrailEngine
 from nanobot.agent.intent import IntentClassifier, QueryIntent
 from nanobot.agent.subagent import SubagentManager
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
@@ -16,7 +19,10 @@ from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
 from nanobot.agent.tools.spawn import SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.agent.tracing import Tracer
+from nanobot.agent.usage import UsageRecord, UsageTracker
 from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.progress import ProgressEvent, ProgressKind
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.manager import ChannelManager
 from nanobot.providers.base import LLMProvider
@@ -30,10 +36,13 @@ if TYPE_CHECKING:
         ContextConfig,
         DaemonConfig,
         ExecToolConfig,
+        GuardrailConfig,
         IntentConfig,
         MCPConfig,
         MemoryConfig,
         MemoryExtractionConfig,
+        StreamingConfig,
+        TracingConfig,
     )
     from nanobot.cron.service import CronService
     from nanobot.mcp import MCPManager
@@ -136,6 +145,9 @@ class AgentLoop:
         registry: "AgentRegistry | None" = None,
         daemon_config: "DaemonConfig | None" = None,
         intent_config: "IntentConfig | None" = None,
+        streaming_config: "StreamingConfig | None" = None,
+        tracing_config: "TracingConfig | None" = None,
+        guardrail_config: "GuardrailConfig | None" = None,
         temperature: float = 0.7,
         tool_temperature: float = 0.0,
     ):
@@ -143,9 +155,12 @@ class AgentLoop:
             CompactionConfig,
             ContextConfig,
             ExecToolConfig,
+            GuardrailConfig,
             IntentConfig,
             MCPConfig,
             MemoryConfig,
+            StreamingConfig,
+            TracingConfig,
         )
 
         self.bus = bus
@@ -224,6 +239,7 @@ class AgentLoop:
             exec_config=self.exec_config,
             registry=self._registry,
             evolve_manager=self._evolve_manager,
+            progress_callback=bus.publish_progress,
         )
 
         # MCP manager (initialized in run())
@@ -238,6 +254,19 @@ class AgentLoop:
         # Tool failure reflexion: track consecutive failures per tool
         self._tool_failure_counts: dict[str, int] = {}
         self._tool_failure_threshold = 3
+
+        # Config-driven observability
+        self._streaming_config = streaming_config or StreamingConfig()
+        self._tracing_config = tracing_config or TracingConfig()
+        self._guardrail_config = guardrail_config or GuardrailConfig()
+
+        # Observability: tracing, usage tracking, guardrails
+        self._tracer = Tracer(enabled=self._tracing_config.enabled)
+        self._usage_tracker = UsageTracker()
+        self._guardrails = GuardrailEngine(
+            enabled=self._guardrail_config.enabled,
+            timeout_s=self._guardrail_config.timeout_s,
+        )
 
         self._running = False
         self._register_default_tools()
@@ -441,6 +470,165 @@ class AgentLoop:
         elif total_tokens > max_tokens * 0.8:
             logger.debug(f"Context at {total_tokens / max_tokens * 100:.1f}% capacity")
 
+    async def _emit_progress(
+        self,
+        channel: str,
+        chat_id: str,
+        kind: ProgressKind,
+        detail: str = "",
+        tool_name: str | None = None,
+        iteration: int = 0,
+        total_iterations: int = 0,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        """Emit a progress event to the message bus."""
+        event = ProgressEvent(
+            channel=channel,
+            chat_id=chat_id,
+            kind=kind,
+            detail=detail,
+            tool_name=tool_name,
+            iteration=iteration,
+            total_iterations=total_iterations,
+            metadata=metadata or {},
+        )
+        await self.bus.publish_progress(event)
+
+    def _record_usage(
+        self,
+        response_usage: dict[str, int],
+        session_key: str,
+        subsystem: str = "main",
+    ) -> None:
+        """Record token usage from an LLM response."""
+        if not response_usage:
+            return
+        try:
+            self._usage_tracker.record(
+                UsageRecord(
+                    model=self.model,
+                    prompt_tokens=response_usage.get("prompt_tokens", 0),
+                    completion_tokens=response_usage.get("completion_tokens", 0),
+                    total_tokens=response_usage.get("total_tokens", 0),
+                    session_key=session_key,
+                    subsystem=subsystem,
+                )
+            )
+        except Exception as e:
+            logger.debug(f"Failed to record usage: {e}")
+
+    async def _stream_final_response(
+        self,
+        messages: list[dict],
+        channel: str,
+        chat_id: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> str:
+        """Stream the final LLM response with edit-in-place progress events.
+
+        Instead of returning content from a chat() call, this re-calls the
+        LLM with stream() and emits STREAMING progress events at intervals
+        so channels can update their messages in real time.
+        """
+        content = ""
+        last_emit = 0.0
+        interval = self._streaming_config.edit_interval_ms / 1000.0
+        min_chars = self._streaming_config.min_chunk_chars
+
+        async for chunk in self.provider.stream(
+            messages=messages,
+            model=self.model,
+            temperature=self.temperature,
+        ):
+            if chunk.content:
+                content += chunk.content
+
+                now = time.time()
+                if len(content) >= min_chars and now - last_emit >= interval:
+                    await self._emit_progress(
+                        channel,
+                        chat_id,
+                        ProgressKind.STREAMING,
+                        detail=content,
+                        metadata=metadata,
+                    )
+                    last_emit = now
+
+            if chunk.finish_reason:
+                # Record streaming usage if available
+                if chunk.usage:
+                    self._record_usage(chunk.usage, f"{channel}:{chat_id}")
+                break
+
+        return content or ""
+
+    def _detect_clarification(self, content: str) -> bool:
+        """Detect whether the response is a clarification request."""
+        if not content:
+            return False
+        # Short response containing a question mark
+        return "?" in content and len(content) < 500
+
+    def _parse_clarification_options(
+        self,
+        content: str,
+    ) -> list[dict]:
+        """Parse numbered options from a clarification response.
+
+        Returns a list of button component dicts for interactive replies.
+        """
+        options = re.findall(
+            r"^\s*(\d+)[.)]\s+(.+)$",
+            content,
+            re.MULTILINE,
+        )
+        if len(options) < 2:
+            return []
+        return [
+            {
+                "type": "button",
+                "label": f"{num}. {text[:40]}",
+                "callback_data": text,
+            }
+            for num, text in options[:5]
+        ]
+
+    def _handle_guardrail_callback(self, content: str) -> None:
+        """Route guardrail approve/deny callbacks to the engine."""
+        parts = content.split(":", 2)
+        if len(parts) != 3:
+            return
+        action, approval_id = parts[1], parts[2]
+        if action == "approve":
+            self._guardrails.approve(approval_id)
+        elif action == "deny":
+            self._guardrails.deny(approval_id)
+
+    def _check_follow_up(
+        self,
+        tool_name: str,
+        arguments: dict,
+        result: str,
+    ) -> str | None:
+        """Check if a tool execution warrants a proactive follow-up hint.
+
+        Returns a hint string to append to the tool result, or None.
+        """
+        if tool_name == "cron" and "add" in str(arguments.get("action", "")):
+            return "[Hint: A cron job was added. Consider confirming the schedule with the user.]"
+        if tool_name == "write_file":
+            path = str(arguments.get("path", ""))
+            if any(s in path for s in ("config", ".env", ".json", ".yaml")):
+                return "[Hint: A configuration file was written. Verify the changes are correct.]"
+        if tool_name == "exec":
+            # Long-running command (result > 2000 chars suggests complexity)
+            if len(result) > 2000:
+                return (
+                    "[Hint: This command produced extensive output. "
+                    "Consider summarising key results for the user.]"
+                )
+        return None
+
     async def _maybe_compact(
         self,
         messages: list[dict],
@@ -481,6 +669,45 @@ class AgentLoop:
         if new_summary != previous_summary:
             session.set_rolling_summary(new_summary)
 
+        return compacted
+
+    async def _urgent_compact(
+        self,
+        messages: list[dict],
+        session: "Session",
+    ) -> list[dict]:
+        """Force compaction when context is critically full (95%+)."""
+        if not self.compaction_config.enabled:
+            return messages
+
+        from nanobot.utils.tokens import count_messages_tokens
+
+        total = count_messages_tokens(messages)
+        limit = self.context_config.max_context_tokens
+        if total < limit * 0.95:
+            return messages
+
+        logger.warning(f"Urgent compaction: {total}/{limit} tokens ({total / limit * 100:.0f}%)")
+
+        from nanobot.agent.compaction import MessageCompactor
+
+        compaction_provider = self._resolve_subsystem_provider(
+            self.compaction_config.provider,
+        )
+        compactor = MessageCompactor(
+            provider=compaction_provider,
+            model=self.compaction_config.model or self.model,
+            keep_recent=self.compaction_config.keep_recent,
+        )
+        previous_summary = session.get_rolling_summary()
+        target = int(limit * 0.5)
+        compacted, new_summary = await compactor.compact_messages(
+            messages,
+            target,
+            previous_summary,
+        )
+        if new_summary != previous_summary:
+            session.set_rolling_summary(new_summary)
         return compacted
 
     async def run(self) -> None:
@@ -563,6 +790,8 @@ class AgentLoop:
         Process a single inbound message.
 
         Acquires processing lock to serialize with daemon execution.
+        Guardrail callbacks are routed outside the lock so they can
+        unblock a tool execution waiting on approval.
 
         Args:
             msg: The inbound message to process.
@@ -570,8 +799,18 @@ class AgentLoop:
         Returns:
             The response message, or None if no response needed.
         """
+        # Handle guardrail callbacks outside the lock
+        if msg.content.startswith("guardrail:"):
+            self._handle_guardrail_callback(msg.content)
+            return None
+
         async with self._processing_lock:
-            return await self._process_message_unlocked(msg)
+            trace_id = self._tracer.new_trace()
+            async with self._tracer.span(
+                "process_message",
+                attributes={"channel": msg.channel, "trace_id": trace_id},
+            ):
+                return await self._process_message_unlocked(msg)
 
     async def _process_message_unlocked(self, msg: InboundMessage) -> OutboundMessage | None:
         """Inner message processing (called under lock)."""
@@ -642,6 +881,14 @@ class AgentLoop:
                 "You MUST use a tool to verify your answer.]\n\n" + user_content
             )
 
+        # Subagent visibility: inject running subagent count into context
+        running_count = self.subagents.get_running_count()
+        if running_count > 0:
+            subagent_note = f"[{running_count} background subagent(s) currently running]"
+            channel_context = (
+                f"{subagent_note}\n\n{channel_context}" if channel_context else subagent_note
+            )
+
         # Build initial messages (use token-aware history)
         messages = self.context.build_messages(
             history=session.get_history(max_tokens=self.context_config.history_budget),
@@ -667,19 +914,38 @@ class AgentLoop:
 
             # Check context budget before LLM call
             self._check_context_budget(messages)
+            messages = await self._urgent_compact(messages, session)
 
             # Call LLM -- use low temperature for tool-calling determinism
             tool_defs = self.tools.get_definitions()
             current_temp = self.tool_temperature if tool_defs else self.temperature
+            # Emit thinking progress
+            await self._emit_progress(
+                msg.channel,
+                msg.chat_id,
+                ProgressKind.THINKING,
+                detail=f"Iteration {iteration}/{self.max_iterations}",
+                iteration=iteration,
+                total_iterations=self.max_iterations,
+                metadata=msg.metadata,
+            )
+
             # Force tool use on first iteration for FACTUAL queries
             tc = forced_tool_choice if iteration == 1 else None
-            response = await self.provider.chat(
-                messages=messages,
-                tools=tool_defs,
-                model=self.model,
-                temperature=current_temp,
-                tool_choice=tc,
-            )
+            async with self._tracer.span(
+                "llm_call",
+                attributes={"model": self.model, "iteration": iteration},
+            ):
+                response = await self.provider.chat(
+                    messages=messages,
+                    tools=tool_defs,
+                    model=self.model,
+                    temperature=current_temp,
+                    tool_choice=tc,
+                )
+
+            # Record token usage
+            self._record_usage(response.usage, msg.session_key)
 
             # Handle tool calls
             if response.has_tool_calls:
@@ -714,11 +980,70 @@ class AgentLoop:
                             )
                             logger.warning(f"Tool validation failed: {tool_call.name} - {errors}")
                         else:
+                            # Guardrail check before execution
+                            rule = self._guardrails.check(
+                                tool_call.name,
+                                tool_call.arguments,
+                            )
+                            if rule:
+                                approval_id = self._guardrails.request_approval(
+                                    rule,
+                                    tool_call.name,
+                                    tool_call.arguments,
+                                )
+                                approved = await self._guardrails.wait_for_approval(
+                                    approval_id,
+                                )
+                                if not approved:
+                                    result = (
+                                        f"Error: {rule.description} blocked by guardrail "
+                                        f"(approval denied or timed out)"
+                                    )
+                                    messages = self.context.add_tool_result(
+                                        messages,
+                                        tool_call.id,
+                                        tool_call.name,
+                                        result,
+                                    )
+                                    continue
+
                             args_str = json.dumps(tool_call.arguments)
                             logger.debug(
                                 f"Executing tool: {tool_call.name} with arguments: {args_str}"
                             )
-                            result = await self.tools.execute(tool_call.name, tool_call.arguments)
+                            await self._emit_progress(
+                                msg.channel,
+                                msg.chat_id,
+                                ProgressKind.TOOL_START,
+                                tool_name=tool_call.name,
+                                detail=f"Executing {tool_call.name}",
+                                iteration=iteration,
+                                total_iterations=self.max_iterations,
+                                metadata=msg.metadata,
+                            )
+                            async with self._tracer.span(
+                                "tool_exec",
+                                attributes={"tool": tool_call.name},
+                            ):
+                                result = await self.tools.execute(
+                                    tool_call.name,
+                                    tool_call.arguments,
+                                )
+                            tool_status = (
+                                "error"
+                                if isinstance(result, str) and result.startswith("Error")
+                                else "ok"
+                            )
+                            await self._emit_progress(
+                                msg.channel,
+                                msg.chat_id,
+                                ProgressKind.TOOL_COMPLETE,
+                                tool_name=tool_call.name,
+                                detail=f"{tool_call.name}: {tool_status}",
+                                iteration=iteration,
+                                total_iterations=self.max_iterations,
+                                metadata=msg.metadata,
+                            )
 
                     # Reflexion: track consecutive tool failures
                     if isinstance(result, str) and result.startswith("Error"):
@@ -735,13 +1060,32 @@ class AgentLoop:
                     else:
                         self._tool_failure_counts.pop(tool_call.name, None)
 
+                    # Proactive follow-up hints (F12)
+                    hint = self._check_follow_up(
+                        tool_call.name,
+                        tool_call.arguments,
+                        result,
+                    )
+                    if hint:
+                        result = f"{result}\n{hint}"
+
                     result = self._truncate_tool_result(result)
                     messages = self.context.add_tool_result(
                         messages, tool_call.id, tool_call.name, result
                     )
+                    # Per-tool compaction check (F10)
+                    messages = await self._maybe_compact(messages, session)
             else:
-                # No tool calls, we're done
-                final_content = response.content
+                # No tool calls -- final response
+                if self._streaming_config.enabled:
+                    final_content = await self._stream_final_response(
+                        messages,
+                        msg.channel,
+                        msg.chat_id,
+                        msg.metadata,
+                    )
+                else:
+                    final_content = response.content
                 break
 
         if final_content is None:
@@ -752,6 +1096,21 @@ class AgentLoop:
         session.add_message("assistant", final_content)
         self.sessions.save(session)
 
+        # Log session usage summary
+        self._usage_tracker.log_session_summary(msg.session_key)
+
+        # Clarification detection (F2)
+        components: list[dict] = []
+        if self._detect_clarification(final_content):
+            await self._emit_progress(
+                msg.channel,
+                msg.chat_id,
+                ProgressKind.CLARIFICATION,
+                detail="Asking for clarification",
+                metadata=msg.metadata,
+            )
+            components = self._parse_clarification_options(final_content)
+
         # Index conversation to memory (async, don't block response)
         await self._index_conversation(msg.session_key, msg.content, final_content)
 
@@ -759,7 +1118,11 @@ class AgentLoop:
         await self._maybe_extract_and_consolidate(session, msg.session_key)
 
         return OutboundMessage(
-            channel=msg.channel, chat_id=msg.chat_id, content=final_content, metadata=msg.metadata
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content=final_content,
+            metadata=msg.metadata,
+            components=components,
         )
 
     async def _process_system_message(self, msg: InboundMessage) -> OutboundMessage | None:

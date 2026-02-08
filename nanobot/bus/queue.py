@@ -1,11 +1,14 @@
 """Async message queue for decoupled channel-agent communication."""
 
 import asyncio
-from typing import Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from loguru import logger
 
 from nanobot.bus.events import InboundMessage, OutboundMessage
+
+if TYPE_CHECKING:
+    from nanobot.bus.progress import ProgressCallback, ProgressEvent
 
 
 class MessageBus:
@@ -22,6 +25,7 @@ class MessageBus:
         self._outbound_subscribers: dict[
             str, list[Callable[[OutboundMessage], Awaitable[None]]]
         ] = {}
+        self._progress_subscribers: dict[str, list["ProgressCallback"]] = {}
         self._running = False
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
@@ -47,6 +51,21 @@ class MessageBus:
         if channel not in self._outbound_subscribers:
             self._outbound_subscribers[channel] = []
         self._outbound_subscribers[channel].append(callback)
+
+    def subscribe_progress(self, channel: str, callback: "ProgressCallback") -> None:
+        """Subscribe to progress events for a specific channel."""
+        if channel not in self._progress_subscribers:
+            self._progress_subscribers[channel] = []
+        self._progress_subscribers[channel].append(callback)
+
+    async def publish_progress(self, event: "ProgressEvent") -> None:
+        """Publish a progress event to subscribers for the event's channel."""
+        subscribers = self._progress_subscribers.get(event.channel, [])
+        for callback in subscribers:
+            try:
+                await callback(event)
+            except Exception as e:
+                logger.error(f"Error in progress subscriber: {e}")
 
     async def dispatch_outbound(self) -> None:
         """
