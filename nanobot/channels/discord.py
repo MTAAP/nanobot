@@ -467,6 +467,9 @@ class DiscordChannel(BaseChannel):
         if isinstance(message.channel, discord.TextChannel):
             await self._start_typing(message.id, message.channel)
 
+        # Extract reply context (the message being replied to)
+        reply_context = await self._fetch_reply_context(message)
+
         # Extract and clean content
         content = self._clean_message_content(message)
 
@@ -521,6 +524,7 @@ class DiscordChannel(BaseChannel):
                 "guild_id": message.guild.id if message.guild else None,
                 "guild_name": message.guild.name if message.guild else None,
                 "channel_context": channel_context,
+                "reply_context": reply_context,
             },
         )
 
@@ -564,12 +568,19 @@ class DiscordChannel(BaseChannel):
         return False
 
     async def _fetch_channel_context(self, message: "DiscordMessage") -> str:
-        """Fetch recent channel messages as context."""
+        """Fetch recent channel messages as context.
+
+        The Discord API ``limit`` counts all messages including bot messages.
+        Since bot messages are filtered out (they exist in session history),
+        we over-fetch by 3x and stop once we have collected the desired
+        number of non-bot messages.
+        """
         try:
-            history_messages = []
-            async for msg in message.channel.history(
-                limit=self.config.context_messages, before=message
-            ):
+            target = self.config.context_messages
+            history_messages: list[str] = []
+            # Over-fetch to compensate for bot messages being filtered out
+            fetch_limit = target * 3
+            async for msg in message.channel.history(limit=fetch_limit, before=message):
                 # Skip bot messages (we have our own session history)
                 if msg.author.bot:
                     continue
@@ -581,6 +592,9 @@ class DiscordChannel(BaseChannel):
                     content = self._resolve_mentions(content, msg.guild)
                 history_messages.append(f"{author}: {content}")
 
+                if len(history_messages) >= target:
+                    break
+
             if not history_messages:
                 return ""
 
@@ -590,6 +604,42 @@ class DiscordChannel(BaseChannel):
             return "\n".join(history_messages)
         except Exception as e:
             logger.warning(f"Failed to fetch channel history: {e}")
+            return ""
+
+    async def _fetch_reply_context(self, message: "DiscordMessage") -> str:
+        """Fetch the content of the message being replied to, if any.
+
+        When a user replies to a specific message, this extracts the
+        referenced message so the agent knows what is being referred to.
+        """
+        if not message.reference or not message.reference.message_id:
+            return ""
+
+        try:
+            # Use cached resolved reference if available
+            ref_msg = None
+            if message.reference.resolved and hasattr(message.reference.resolved, "content"):
+                ref_msg = message.reference.resolved
+            else:
+                ref_msg = await message.channel.fetch_message(message.reference.message_id)
+
+            if not ref_msg:
+                return ""
+
+            author = ref_msg.author.display_name or ref_msg.author.name
+            content = ref_msg.content[:500]
+            if ref_msg.guild:
+                content = self._resolve_mentions(content, ref_msg.guild)
+
+            return f"{author}: {content}"
+        except discord.NotFound:
+            logger.debug(f"Referenced message {message.reference.message_id} not found")
+            return ""
+        except discord.Forbidden:
+            logger.debug("No permission to fetch referenced message")
+            return ""
+        except Exception as e:
+            logger.warning(f"Failed to fetch reply context: {e}")
             return ""
 
     def _clean_message_content(self, message: "DiscordMessage") -> str:
