@@ -189,9 +189,32 @@ class SessionManager:
             return None
 
     def save(self, session: Session) -> None:
-        """Save a session to disk."""
+        """Save a session to disk.
+
+        Uses incremental append for new messages when possible,
+        falling back to full rewrite when metadata changes.
+        """
         path = self._get_session_path(session.key)
 
+        cached = self._cache.get(session.key)
+
+        # If session was previously saved and only new messages were added,
+        # append just the new messages instead of rewriting the whole file.
+        if (
+            cached is not None
+            and path.exists()
+            and cached.metadata == session.metadata
+            and len(session.messages) > len(cached.messages)
+            and session.messages[: len(cached.messages)] == cached.messages[: len(cached.messages)]
+        ):
+            new_messages = session.messages[len(cached.messages) :]
+            with open(path, "a", encoding="utf-8") as f:
+                for msg in new_messages:
+                    f.write(json.dumps(msg) + "\n")
+            self._cache[session.key] = session
+            return
+
+        # Full rewrite when metadata changed or first save
         lines: list[str] = []
         # Write metadata first
         metadata_line = {

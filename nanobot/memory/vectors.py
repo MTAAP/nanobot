@@ -6,6 +6,7 @@ import json
 import math
 import os
 import sqlite3
+import struct
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
@@ -17,6 +18,42 @@ from nanobot.llm.embeddings import EmbeddingService
 from nanobot.utils.helpers import ensure_dir
 
 CURRENT_SCHEMA_VERSION = 1
+
+# Try to use numpy for accelerated vector operations
+try:
+    import numpy as np
+
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
+
+
+def _cosine_similarity_np(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity using numpy (fast path)."""
+    va = np.asarray(a, dtype=np.float32)
+    vb = np.asarray(b, dtype=np.float32)
+    dot = np.dot(va, vb)
+    norm_a = np.linalg.norm(va)
+    norm_b = np.linalg.norm(vb)
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return float(dot / (norm_a * norm_b))
+
+
+def _cosine_similarity_py(a: list[float], b: list[float]) -> float:
+    """Compute cosine similarity in pure Python (fallback)."""
+    if len(a) != len(b):
+        return 0.0
+    dot_product = sum(x * y for x, y in zip(a, b))
+    norm_a = sum(x * x for x in a) ** 0.5
+    norm_b = sum(x * x for x in b) ** 0.5
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot_product / (norm_a * norm_b)
+
+
+# Select best available implementation
+_cosine_similarity_fast = _cosine_similarity_np if _HAS_NUMPY else _cosine_similarity_py
 
 
 class VectorStore:
@@ -152,12 +189,24 @@ class VectorStore:
         return hashlib.sha256(text.encode("utf-8")).hexdigest()[:32]
 
     def _serialize_embedding(self, embedding: list[float]) -> bytes:
-        """Serialize embedding to bytes for storage."""
-        return json.dumps(embedding).encode("utf-8")
+        """Serialize embedding to compact binary format.
+
+        Uses struct packing (4 bytes per float32) instead of JSON,
+        yielding ~5-10x smaller blobs and faster (de)serialization.
+        """
+        return struct.pack(f"{len(embedding)}f", *embedding)
 
     def _deserialize_embedding(self, data: bytes) -> list[float]:
-        """Deserialize embedding from bytes."""
-        return json.loads(data.decode("utf-8"))
+        """Deserialize embedding from bytes.
+
+        Handles both new binary format and legacy JSON format.
+        """
+        # Legacy JSON format starts with '['
+        if data[:1] == b'[':
+            return json.loads(data.decode("utf-8"))
+        # Binary struct format
+        count = len(data) // 4
+        return list(struct.unpack(f"{count}f", data))
 
     def _cache_query_embedding(self, query: str, embedding: list[float]) -> None:
         """Cache a query embedding with FIFO eviction."""
@@ -212,15 +261,42 @@ class VectorStore:
                 return False
 
             # Semantic dedup: check for similar existing entries
+            # Only scan recent entries to limit cost (last 500 is sufficient
+            # for catching near-duplicates without scanning the entire table)
             if not skip_dedup:
                 with sqlite3.connect(self.db_path) as conn:
-                    cursor = conn.execute("SELECT id, embedding FROM vectors")
-                    for row in cursor:
-                        existing_emb = self._deserialize_embedding(row[1])
-                        sim = self._cosine_similarity(embedding, existing_emb)
-                        if sim > 0.85:
-                            logger.debug(f"Skipping semantically similar entry (sim={sim:.3f})")
+                    rows = conn.execute(
+                        "SELECT id, embedding FROM vectors "
+                        "ORDER BY id DESC LIMIT 500"
+                    ).fetchall()
+
+                if rows:
+                    if _HAS_NUMPY:
+                        # Batch cosine similarity with numpy
+                        emb_vec = np.asarray(embedding, dtype=np.float32)
+                        emb_matrix = np.array(
+                            [self._deserialize_embedding(r[1]) for r in rows],
+                            dtype=np.float32,
+                        )
+                        dots = emb_matrix @ emb_vec
+                        norms = np.linalg.norm(emb_matrix, axis=1) * np.linalg.norm(emb_vec)
+                        norms[norms == 0] = 1.0
+                        sims = dots / norms
+                        max_sim = float(np.max(sims))
+                        if max_sim > 0.85:
+                            logger.debug(
+                                f"Skipping semantically similar entry (sim={max_sim:.3f})"
+                            )
                             return False
+                    else:
+                        for row in rows:
+                            existing_emb = self._deserialize_embedding(row[1])
+                            sim = self._cosine_similarity(embedding, existing_emb)
+                            if sim > 0.85:
+                                logger.debug(
+                                    f"Skipping semantically similar entry (sim={sim:.3f})"
+                                )
+                                return False
 
             # Store in database
             with sqlite3.connect(self.db_path) as conn:
@@ -376,8 +452,73 @@ class VectorStore:
         matched_ids: list[int] = []
 
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(sql, params)
-            for row in cursor:
+            rows = conn.execute(sql, params).fetchall()
+
+        if not rows:
+            return []
+
+        # Batch similarity computation with numpy when available
+        if _HAS_NUMPY and rows:
+            ids = []
+            texts = []
+            metadatas = []
+            created_ats = []
+            embeddings_list = []
+
+            for row in rows:
+                entry_id, text, embedding_blob, metadata_json, created_at = row
+                ids.append(entry_id)
+                texts.append(text)
+                metadatas.append(json.loads(metadata_json) if metadata_json else {})
+                created_ats.append(created_at)
+                embeddings_list.append(self._deserialize_embedding(embedding_blob))
+
+            # Vectorized cosine similarity: compute all at once
+            query_vec = np.asarray(query_embedding, dtype=np.float32)
+            emb_matrix = np.array(embeddings_list, dtype=np.float32)
+            # Dot products
+            dots = emb_matrix @ query_vec
+            # Norms
+            norms = np.linalg.norm(emb_matrix, axis=1) * np.linalg.norm(query_vec)
+            norms[norms == 0] = 1.0  # avoid division by zero
+            similarities = dots / norms
+
+            # Filter by min_similarity and build results
+            mask = similarities >= min_similarity
+            for idx in np.where(mask)[0]:
+                i = int(idx)
+                similarity = float(similarities[i])
+                metadata = metadatas[i]
+                created_at = created_ats[i]
+
+                # Time decay
+                try:
+                    created = datetime.fromisoformat(created_at)
+                    days_old = (now - created).total_seconds() / 86400
+                except (ValueError, TypeError):
+                    days_old = 0.0
+
+                final_score = similarity * math.exp(-recency_weight * days_old)
+
+                # Type-weighted scoring
+                entry_type = metadata.get("type", "conversation")
+                weight = type_weights.get(entry_type, 1.0)
+                final_score *= weight
+
+                matched_ids.append(ids[i])
+                results.append(
+                    {
+                        "id": ids[i],
+                        "text": texts[i],
+                        "similarity": similarity,
+                        "score": final_score,
+                        "metadata": metadata,
+                        "created_at": created_at,
+                    }
+                )
+        else:
+            # Pure Python fallback (no numpy)
+            for row in rows:
                 entry_id, text, embedding_blob, metadata_json, created_at = row
                 embedding = self._deserialize_embedding(embedding_blob)
                 similarity = self._cosine_similarity(query_embedding, embedding)
@@ -435,17 +576,7 @@ class VectorStore:
 
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between two vectors."""
-        if len(a) != len(b):
-            return 0.0
-
-        dot_product = sum(x * y for x, y in zip(a, b))
-        norm_a = sum(x * x for x in a) ** 0.5
-        norm_b = sum(x * x for x in b) ** 0.5
-
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-
-        return dot_product / (norm_a * norm_b)
+        return _cosine_similarity_fast(a, b)
 
     def count(self) -> int:
         """Get the number of entries in the store."""

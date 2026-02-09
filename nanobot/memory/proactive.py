@@ -66,29 +66,26 @@ class ProactiveMemory:
         Check for memories that should be proactively surfaced.
 
         Looks for commitments and deadlines within the next 3 days.
+        Uses a single combined query instead of multiple separate searches.
 
         Returns:
             List of reminder strings.
         """
-        queries = [
-            "commitment deadline due soon",
-            "remind me upcoming task scheduled",
-            "promise to do need to finish",
-        ]
+        # Single query combining all reminder-related terms
+        query = "commitment deadline due soon remind upcoming task scheduled promise finish"
 
         candidates: list[dict[str, Any]] = []
         seen_texts: set[str] = set()
 
-        for query in queries:
-            try:
-                results = await self.vector_store.search(query, top_k=10, min_similarity=0.3)
-                for r in results:
-                    text = r.get("text", "")
-                    if text not in seen_texts:
-                        seen_texts.add(text)
-                        candidates.append(r)
-            except Exception as e:
-                logger.error(f"Reminder search failed: {e}")
+        try:
+            results = await self.vector_store.search(query, top_k=20, min_similarity=0.3)
+            for r in results:
+                text = r.get("text", "")
+                if text not in seen_texts:
+                    seen_texts.add(text)
+                    candidates.append(r)
+        except Exception as e:
+            logger.error(f"Reminder search failed: {e}")
 
         reminders: list[str] = []
         now = datetime.now()
