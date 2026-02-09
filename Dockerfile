@@ -1,6 +1,6 @@
-FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+FROM python:3.12-slim
 
-# Install Node.js 20, GitHub CLI, and build tools
+# Install Node.js 20, GitHub CLI, build tools, and uv
 RUN apt-get update && \
     apt-get install -y --no-install-recommends curl ca-certificates gnupg git tmux && \
     mkdir -p /etc/apt/keyrings && \
@@ -12,22 +12,27 @@ RUN apt-get update && \
       > /etc/apt/sources.list.d/github-cli.list && \
     apt-get update && \
     apt-get install -y --no-install-recommends nodejs gh && \
+    curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.cargo/bin:$PATH" && \
     apt-get purge -y gnupg && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# Set PATH for uv
+ENV PATH="/root/.local/bin:$PATH"
+
 # Install Python dependencies first (cached layer)
 COPY pyproject.toml README.md LICENSE ./
 RUN mkdir -p nanobot bridge && touch nanobot/__init__.py && \
-    uv pip install --system --no-cache . && \
+    /root/.local/bin/uv pip install --system --no-cache . && \
     rm -rf nanobot bridge
 
 # Copy the full source and install
 COPY nanobot/ nanobot/
 COPY bridge/ bridge/
-RUN uv pip install --system --no-cache .
+RUN /root/.local/bin/uv pip install --system --no-cache .
 
 # Build the WhatsApp bridge
 WORKDIR /app/bridge
@@ -47,6 +52,6 @@ EXPOSE 18790
 # Default environment
 ENV NANOBOT_WORKSPACE=/app/workspace
 
-# Use restart-aware entrypoint for 'run' command, direct for others
-ENTRYPOINT ["nanobot"]
-CMD ["run"]
+# Use entrypoint.sh which handles gateway restart signals and passes through other commands
+ENTRYPOINT ["/entrypoint.sh"]
+CMD ["gateway"]

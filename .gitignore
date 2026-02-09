@@ -15,3 +15,5 @@ docs/
 *.pywz
 *.pyzz
 /.sisyphus
+venv/**
+bridge/node_modules/**

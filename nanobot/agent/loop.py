@@ -26,8 +26,62 @@ from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.bus.progress import ProgressEvent, ProgressKind
 from nanobot.bus.queue import MessageBus
 from nanobot.channels.manager import ChannelManager
-from nanobot.providers.base import LLMProvider
+from nanobot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from nanobot.session.compaction import CompactionConfig as SessionCompactionConfig
+
+
+_TOOL_CALL_BLOCK_RE = re.compile(
+    r"<tool_call>\s*\w+.*?</tool_call>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_tool_calls_from_content(content: str | None) -> list[ToolCallRequest]:
+    """Parse XML-style tool calls from response content when the model emits them as text.
+
+    Handles format: <tool_call>NAME<arg_key>k</arg_key><arg_value>v</arg_value>...</tool_call>
+    Returns a list of ToolCallRequest; content is not modified.
+    """
+    if not content or "<tool_call>" not in content:
+        return []
+    out: list[ToolCallRequest] = []
+    # Match <tool_call>toolname ... </tool_call>
+    for i, block in enumerate(
+        re.finditer(
+            r"<tool_call>\s*(\w+)\s*(.*?)</tool_call>",
+            content,
+            re.DOTALL | re.IGNORECASE,
+        )
+    ):
+        name = block.group(1).strip()
+        inner = block.group(2)
+        args: dict[str, Any] = {}
+        for kv in re.finditer(
+            r"<arg_key>\s*([^<]*?)\s*</arg_key>\s*<arg_value>\s*(.*?)\s*</arg_value>",
+            inner,
+            re.DOTALL | re.IGNORECASE,
+        ):
+            k = kv.group(1).strip()
+            v = kv.group(2).strip()
+            if k:
+                args[k] = v
+        if name:
+            out.append(
+                ToolCallRequest(
+                    id=f"content_parse_{i}_{int(time.time() * 1000)}",
+                    name=name,
+                    arguments=args,
+                )
+            )
+    return out
+
+
+def _strip_tool_call_blocks_from_content(content: str | None) -> str:
+    """Remove <tool_call>...</tool_call> blocks so they are not shown to the user."""
+    if not content or "<tool_call>" not in content:
+        return content or ""
+    cleaned = _TOOL_CALL_BLOCK_RE.sub("", content)
+    return cleaned.strip() or ""
 from nanobot.session.compaction import SessionCompactor
 from nanobot.session.manager import SessionManager
 
@@ -1026,6 +1080,20 @@ class AgentLoop:
 
             # Record token usage
             self._record_usage(response.usage, msg.session_key)
+
+            # Fallback: some models emit tool calls as XML in content instead of structured tool_calls
+            if not response.has_tool_calls and response.content and "<tool_call>" in response.content:
+                parsed = _parse_tool_calls_from_content(response.content)
+                if parsed:
+                    logger.debug(f"Parsed {len(parsed)} tool call(s) from response content")
+                    # Strip XML blocks so we do not store or send raw tool_call tags to the user
+                    cleaned_content = _strip_tool_call_blocks_from_content(response.content)
+                    response = LLMResponse(
+                        content=cleaned_content,
+                        tool_calls=parsed,
+                        finish_reason=response.finish_reason,
+                        usage=response.usage,
+                    )
 
             # Handle tool calls
             if response.has_tool_calls:

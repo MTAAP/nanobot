@@ -8,10 +8,6 @@
 
 set -e
 
-# Use NANOBOT_WORKSPACE if set, otherwise default to /app/workspace
-WORKSPACE="${NANOBOT_WORKSPACE:-/app/workspace}"
-RESTART_SIGNAL="$WORKSPACE/.restart_signal"
-
 # Extract GITHUB_TOKEN from config for gh CLI auth (fallback if not in env)
 if [ -z "$GITHUB_TOKEN" ] && [ -f "/root/.nanobot/config.json" ]; then
     GH_TOKEN_EXTRACTED=$(python3 -c "
@@ -30,29 +26,38 @@ except Exception:
     fi
 fi
 
-echo "Starting nanobot with restart signal support..."
-echo "Workspace: $WORKSPACE"
+# If command is 'gateway', use restart-aware wrapper
+if [ "$1" = "gateway" ]; then
+    WORKSPACE="${NANOBOT_WORKSPACE:-/app/workspace}"
+    RESTART_SIGNAL="$WORKSPACE/.restart_signal"
 
-while true; do
-    echo "$(date): Starting nanobot..."
+    echo "Starting nanobot gateway with restart signal support..."
+    echo "Workspace: $WORKSPACE"
 
-    # Run nanobot gateway and capture exit code
-    nanobot gateway || exit_code=$?
+    while true; do
+        echo "$(date): Starting nanobot gateway..."
 
-    # Check for restart signal
-    if [ -f "$RESTART_SIGNAL" ]; then
-        echo "$(date): Restart signal detected"
-        cat "$RESTART_SIGNAL"
-        echo ""
-        echo "Restarting nanobot..."
-        # Signal file is read and cleared by nanobot on startup
-        sleep 1
-        continue
-    fi
+        # Run nanobot gateway and capture exit code
+        nanobot gateway || exit_code=$?
 
-    # Normal exit or error
-    echo "$(date): Nanobot exited with code: ${exit_code:-0}"
+        # Check for restart signal
+        if [ -f "$RESTART_SIGNAL" ]; then
+            echo "$(date): Restart signal detected"
+            cat "$RESTART_SIGNAL"
+            echo ""
+            echo "Restarting nanobot..."
+            # Signal file is read and cleared by nanobot on startup
+            sleep 1
+            continue
+        fi
 
-    # Exit if nanobot exited normally (code 0) or with error
-    exit ${exit_code:-0}
-done
+        # Normal exit or error
+        echo "$(date): Nanobot exited with code: ${exit_code:-0}"
+
+        # Exit if nanobot exited normally (code 0) or with error
+        exit ${exit_code:-0}
+    done
+else
+    # For all other commands, pass through directly
+    exec nanobot "$@"
+fi

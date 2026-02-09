@@ -329,7 +329,7 @@ class WebToolsConfig(BaseModel):
 class ExecToolConfig(BaseModel):
     """Shell exec tool configuration."""
 
-    timeout: int = 60
+    timeout: int = 120  # Seconds; long read-only commands (e.g. find over large trees) may need more
     restrict_to_workspace: bool = False  # If true, block commands accessing paths outside workspace
 
 

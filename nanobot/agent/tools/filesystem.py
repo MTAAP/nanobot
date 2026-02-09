@@ -53,7 +53,10 @@ class ReadFileTool(Tool):
             if not file_path.exists():
                 return f"Error: File not found: {path}"
             if not file_path.is_file():
-                return f"Error: Not a file: {path}"
+                return (
+                    f"Error: Not a file (path is a directory): {path}. "
+                    "Use list_dir to list directory contents, or read_file with a file path."
+                )
 
             content = file_path.read_text(encoding="utf-8")
             return content

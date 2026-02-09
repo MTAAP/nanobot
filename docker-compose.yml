@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     # Use the restart-aware entrypoint for MCP server installation support
     entrypoint: ["/entrypoint.sh"]
+    command: ["gateway"]
     volumes:
       # Mount local config directly for easy editing
       - ~/.nanobot:/root/.nanobot
