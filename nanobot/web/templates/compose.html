@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Compose Email{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-kp-blue mb-6">Compose Outreach: {{ rec.company_name }}</h2>
+
+<div class="bg-white rounded-2xl shadow-lg p-6">
+    <form id="compose-form" class="space-y-4">
+        <input type="hidden" id="compose-company" value="{{ rec.company_name }}">
+
+        <div>
+            <label for="recipient" class="block text-sm font-medium text-kp-dark mb-1">Recipient Email</label>
+            <input type="email" id="recipient" value="{{ contact_email }}"
+                   placeholder="name@company.de"
+                   class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+                <label for="anrede" class="block text-sm font-medium text-kp-dark mb-1">Anrede</label>
+                <select id="anrede"
+                        class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                    <option value="Frau">Frau</option>
+                    <option value="Herr">Herr</option>
+                </select>
+            </div>
+            <div>
+                <label for="nachname" class="block text-sm font-medium text-kp-dark mb-1">Nachname</label>
+                <input type="text" id="nachname" value="{{ nachname }}"
+                       placeholder="Nachname"
+                       class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+            </div>
+        </div>
+
+        <div>
+            <label for="subject" class="block text-sm font-medium text-kp-dark mb-1">Subject</label>
+            <input type="text" id="subject" value="{{ subject }}"
+                   class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+        </div>
+
+        <div>
+            <label for="email-body" class="block text-sm font-medium text-kp-dark mb-1">Email Body</label>
+            <textarea id="email-body" rows="16"
+                      class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">{{ body }}</textarea>
+        </div>
+
+        <div class="flex flex-wrap gap-3 pt-2">
+            <button type="button" onclick="openInEmailClient()"
+                    class="bg-kp-blue text-white font-semibold rounded-xl px-4 py-2 hover:bg-[#004a7e] transition-colors duration-200">
+                Open in Email Client
+            </button>
+            <button type="button" onclick="regenerateEmail()"
+                    class="rounded-xl px-4 py-2 border border-kp-blue text-kp-blue font-semibold hover:bg-kp-blue hover:text-white transition-colors duration-200">
+                Regenerate with Nano
+            </button>
+            <button type="button"
+                    onclick="openChat('recommendation', {{ rec.id }})"
+                    class="rounded-xl px-4 py-2 border border-kp-blue text-kp-blue font-semibold hover:bg-kp-blue hover:text-white transition-colors duration-200">
+                Discuss
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

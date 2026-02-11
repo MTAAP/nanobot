@@ -1,7 +1,6 @@
 """Recommendations approval route."""
 
 from datetime import datetime
-from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -65,6 +64,7 @@ async def reject_rec(request: Request, rec_id: int):
 
 @router.get("/{rec_id}/compose")
 async def compose_email(request: Request, rec_id: int):
+    """Show email compose page with rendered outreach template."""
     auth = request.app.state.auth
     if not auth.require_auth(request):
         return RedirectResponse("/login")
@@ -74,10 +74,50 @@ async def compose_email(request: Request, rec_id: int):
     if not rec:
         return RedirectResponse("/recommendations", status_code=303)
 
+    # Get the signal for context
+    signal = store.get_signal(rec.get("signal_id")) if rec.get("signal_id") else None
+
+    # Pick template based on service_area
+    template_map = {
+        "change_management": "outreach_change.md",
+        "turnaround": "outreach_turnaround.md",
+        "strategy": "outreach_strategy.md",
+        "leadership": "outreach_leadership.md",
+        "process_optimization": "outreach_process.md",
+        "sales_management": "outreach_sales.md",
+    }
+    template_name = template_map.get(rec.get("service_area", ""), "outreach_change.md")
+
+    from nanobot.marketing.reports import ReportGenerator
+
+    generator = ReportGenerator()
+    body = generator.render_outreach(
+        template_name,
+        {
+            "company_name": rec["company_name"],
+            "signal_description": signal.get("title", "") if signal else "",
+            "consultant_name": rec.get("consultant_name", ""),
+            "industry": signal.get("industry", "") if signal else "",
+            "absender_name": "Ihr K&P Team",
+            "impressum": "Kraus & Partner | kraus-und-partner.de",
+            "abmeldelink": "[Abmeldelink]",
+        },
+    )
+
     subject = f"K&P: {rec.get('service_area', '')} - {rec['company_name']}"
-    body = rec.get("pitch_summary", "")
-    mailto = f"mailto:?subject={quote(subject)}&body={quote(body)}"
-    return RedirectResponse(mailto, status_code=303)
+
+    templates = request.app.state.templates
+    return templates.TemplateResponse(
+        "compose.html",
+        {
+            "request": request,
+            "rec": rec,
+            "subject": subject,
+            "body": body,
+            "contact_email": "",
+            "nachname": "",
+        },
+    )
 
 
 @router.post("/{rec_id}/back-to-pending")

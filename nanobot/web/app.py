@@ -51,6 +51,7 @@ def create_app(
 
     # Include routers
     from nanobot.web.routes.chat import router as chat_router
+    from nanobot.web.routes.intelligence import router as intel_router
     from nanobot.web.routes.leads import router as leads_router
     from nanobot.web.routes.recommendations import router as recs_router
     from nanobot.web.routes.reports import router as reports_router
@@ -60,6 +61,7 @@ def create_app(
     app.include_router(signals_router)
     app.include_router(leads_router)
     app.include_router(recs_router)
+    app.include_router(intel_router)
     app.include_router(reports_router)
     app.include_router(chat_router)
     app.include_router(settings_router)

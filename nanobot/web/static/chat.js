@@ -3,9 +3,27 @@
 let chatWs = null;
 let chatSessionId = null;
 let reconnectTimer = null;
+let streamingMsgEl = null;
+let inActiveChat = false;
 
 function generateSessionId() {
-    return 'web-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+    return 'web-' + Date.now().toString(36)
+        + '-' + Math.random().toString(36).slice(2, 8);
+}
+
+function renderMarkdown(text) {
+    text = (text || '')
+        .replace(/<\|tool_calls_section_begin\|>[\s\S]*/g, '')
+        .trimEnd();
+    if (!text) return '';
+    if (typeof marked !== 'undefined') {
+        return marked.parse(text);
+    }
+    // Fallback: escape HTML and preserve whitespace
+    return text
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/\n/g, '<br>');
 }
 
 function openChat(context, id) {
@@ -15,58 +33,299 @@ function openChat(context, id) {
     sidebar.classList.remove('hidden');
     document.body.classList.add('chat-open');
 
-    // Set title based on context
-    const titleEl = document.getElementById('chat-title');
     if (context && id) {
-        const labels = {signal: 'Signal', lead: 'Lead', recommendation: 'Recommendation'};
-        titleEl.textContent = 'Discuss ' + (labels[context] || context) + ' #' + id;
+        // Context-specific chat: create new session immediately
+        inActiveChat = true;
+        const titleEl = document.getElementById('chat-title');
+        const labels = {
+            signal: 'Signal',
+            lead: 'Lead',
+            recommendation: 'Recommendation'
+        };
+        titleEl.textContent =
+            'Discuss ' + (labels[context] || context) + ' #' + id;
+
+        const messagesEl = document.getElementById('chat-messages');
+        messagesEl.innerHTML = '';
+        streamingMsgEl = null;
+
+        showInputArea();
+        chatSessionId = generateSessionId();
+        connectWebSocket(context, id);
     } else {
-        titleEl.textContent = 'Chat with Nano';
+        // No context: show session list
+        showSessionList();
     }
-
-    // Clear previous messages
-    const messagesEl = document.getElementById('chat-messages');
-    messagesEl.innerHTML = '';
-
-    // Connect WebSocket
-    chatSessionId = generateSessionId();
-    connectWebSocket(context, id);
 }
 
 function closeSidebar() {
+    inActiveChat = false;
     const sidebar = document.getElementById('chat-sidebar');
     if (sidebar) {
         sidebar.classList.add('hidden');
         document.body.classList.remove('chat-open');
     }
     disconnectWebSocket();
+    hideBackButton();
+}
+
+function showSessionList() {
+    inActiveChat = false;
+    const titleEl = document.getElementById('chat-title');
+    titleEl.textContent = 'Chat with Nano';
+    hideBackButton();
+    hideInputArea();
+
+    const messagesEl = document.getElementById('chat-messages');
+    messagesEl.innerHTML = '<div class="chat-status">Loading...</div>';
+
+    fetch('/chat/sessions')
+        .then(function(r) { return r.json(); })
+        .then(function(sessions) {
+            messagesEl.innerHTML = '';
+
+            var newBtn = document.createElement('button');
+            newBtn.className = 'chat-new-btn';
+            newBtn.textContent = 'New Chat';
+            newBtn.onclick = startNewChat;
+            messagesEl.appendChild(newBtn);
+
+            if (!sessions || sessions.length === 0) {
+                var empty = document.createElement('div');
+                empty.className = 'chat-status';
+                empty.textContent = 'No previous chats';
+                messagesEl.appendChild(empty);
+                return;
+            }
+
+            sessions.forEach(function(s) {
+                var item = document.createElement('div');
+                item.className = 'chat-session-item';
+                item.onclick = function() {
+                    openSession(s.id);
+                };
+
+                var info = document.createElement('div');
+                info.className = 'chat-session-info';
+
+                var preview = document.createElement('div');
+                preview.className = 'chat-session-preview';
+                preview.textContent = s.preview || 'Chat session';
+
+                var meta = document.createElement('div');
+                var time = document.createElement('span');
+                time.className = 'chat-session-time';
+                time.textContent = formatTimeAgo(s.updated_at);
+                var count = document.createElement('span');
+                count.className = 'chat-session-count';
+                count.textContent =
+                    ' - ' + (s.message_count || 0) + ' msgs';
+
+                meta.appendChild(time);
+                meta.appendChild(count);
+                info.appendChild(preview);
+                info.appendChild(meta);
+
+                var delBtn = document.createElement('button');
+                delBtn.className = 'chat-session-delete';
+                delBtn.innerHTML = '&times;';
+                delBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    deleteSession(s.id, item);
+                };
+
+                item.appendChild(info);
+                item.appendChild(delBtn);
+                messagesEl.appendChild(item);
+            });
+        })
+        .catch(function() {
+            messagesEl.innerHTML = '';
+            var err = document.createElement('div');
+            err.className = 'chat-status';
+            err.textContent = 'Failed to load sessions';
+            messagesEl.appendChild(err);
+        });
+}
+
+function startNewChat() {
+    inActiveChat = true;
+    chatSessionId = generateSessionId();
+    var titleEl = document.getElementById('chat-title');
+    titleEl.textContent = 'Chat with Nano';
+
+    var messagesEl = document.getElementById('chat-messages');
+    messagesEl.innerHTML = '';
+    streamingMsgEl = null;
+
+    showBackButton();
+    showInputArea();
+    connectWebSocket();
+}
+
+function openChatAndSend(prompt) {
+    var sidebar = document.getElementById('chat-sidebar');
+    if (!sidebar) return;
+    sidebar.classList.remove('hidden');
+    document.body.classList.add('chat-open');
+    startNewChat();
+    setTimeout(function() {
+        var input = document.getElementById('chat-input');
+        input.value = prompt;
+        sendMessage();
+    }, 500);
+}
+
+function openSession(sessionId) {
+    inActiveChat = true;
+    chatSessionId = sessionId;
+    var titleEl = document.getElementById('chat-title');
+    titleEl.textContent = 'Chat with Nano';
+
+    var messagesEl = document.getElementById('chat-messages');
+    messagesEl.innerHTML = '';
+    streamingMsgEl = null;
+
+    showBackButton();
+    showInputArea();
+
+    fetch('/chat/sessions/' + sessionId + '/history')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            (data.messages || []).forEach(function(msg) {
+                appendMessage(
+                    msg.role === 'user' ? 'user' : 'nano',
+                    msg.content
+                );
+            });
+            connectWebSocket();
+        })
+        .catch(function() {
+            appendStatus('Failed to load history');
+            connectWebSocket();
+        });
+}
+
+function showBackButton() {
+    hideBackButton();
+    var header = document.querySelector('.chat-header');
+    if (!header) return;
+    var btn = document.createElement('button');
+    btn.className = 'chat-back-btn';
+    btn.innerHTML = '&#8592;';
+    btn.onclick = goBackToSessions;
+    header.insertBefore(btn, header.firstChild);
+}
+
+function hideBackButton() {
+    var btn = document.querySelector('.chat-back-btn');
+    if (btn) btn.remove();
+}
+
+function goBackToSessions() {
+    disconnectWebSocket();
+    hideBackButton();
+    showSessionList();
+}
+
+function deleteSession(sessionId, itemEl) {
+    fetch('/chat/sessions/' + sessionId, {method: 'DELETE'})
+        .then(function() {
+            if (itemEl) itemEl.remove();
+        })
+        .catch(function() {
+            // Silently ignore delete errors
+        });
+}
+
+function showInputArea() {
+    var area = document.querySelector('.chat-input-area');
+    if (area) area.style.display = 'flex';
+}
+
+function hideInputArea() {
+    var area = document.querySelector('.chat-input-area');
+    if (area) area.style.display = 'none';
+}
+
+function formatTimeAgo(isoDate) {
+    if (!isoDate) return '';
+    var date = new Date(isoDate);
+    var now = new Date();
+    var diffMs = now - date;
+    var diffSec = Math.floor(diffMs / 1000);
+    var diffMin = Math.floor(diffSec / 60);
+    var diffHr = Math.floor(diffMin / 60);
+    var diffDay = Math.floor(diffHr / 24);
+
+    if (diffSec < 60) return 'just now';
+    if (diffMin < 60) return diffMin + 'm ago';
+    if (diffHr < 24) return diffHr + 'h ago';
+    if (diffDay < 7) return diffDay + 'd ago';
+
+    var months = [
+        'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return months[date.getMonth()] + ' ' + date.getDate();
 }
 
 function connectWebSocket(context, id) {
     disconnectWebSocket();
 
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    let url = protocol + '//' + window.location.host + '/chat/ws/' + chatSessionId;
+    var protocol =
+        window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    var url = protocol + '//' + window.location.host
+        + '/chat/ws/' + chatSessionId;
 
     if (context && id) {
-        url += '?context=' + encodeURIComponent(context) + '&id=' + encodeURIComponent(id);
+        url += '?context=' + encodeURIComponent(context)
+            + '&id=' + encodeURIComponent(id);
     }
 
     chatWs = new WebSocket(url);
 
     chatWs.onopen = function() {
         clearTimeout(reconnectTimer);
-        appendStatus('Connected');
+        if (inActiveChat) {
+            appendStatus('Connected');
+        }
     };
 
     chatWs.onmessage = function(event) {
         try {
-            const data = JSON.parse(event.data);
+            var data = JSON.parse(event.data);
             if (data.type === 'message') {
-                appendMessage('nano', data.content);
+                if (streamingMsgEl && data.content) {
+                    streamingMsgEl
+                        .querySelector('.chat-msg-content')
+                        .innerHTML = renderMarkdown(data.content);
+                    streamingMsgEl = null;
+                } else if (streamingMsgEl && !data.content) {
+                    streamingMsgEl = null;
+                } else if (data.content) {
+                    appendMessage('nano', data.content);
+                }
                 hideTyping();
             } else if (data.type === 'progress') {
-                showTyping(data.detail || data.tool_name || 'Thinking...');
+                if (data.kind === 'streaming' && data.detail) {
+                    if (!streamingMsgEl) {
+                        streamingMsgEl =
+                            createMessageEl('nano', data.detail);
+                    } else {
+                        streamingMsgEl
+                            .querySelector('.chat-msg-content')
+                            .innerHTML =
+                                renderMarkdown(data.detail);
+                    }
+                    scrollToBottom();
+                } else {
+                    showTyping(
+                        data.detail
+                            || data.tool_name
+                            || 'Thinking...'
+                    );
+                }
             } else if (data.type === 'error') {
                 appendStatus('Error: ' + data.content);
             }
@@ -76,13 +335,14 @@ function connectWebSocket(context, id) {
     };
 
     chatWs.onclose = function() {
-        appendStatus('Disconnected');
-        // Auto-reconnect after 3 seconds
-        reconnectTimer = setTimeout(function() {
-            if (!document.getElementById('chat-sidebar').classList.contains('hidden')) {
-                connectWebSocket(context, id);
-            }
-        }, 3000);
+        if (inActiveChat) {
+            appendStatus('Disconnected');
+            reconnectTimer = setTimeout(function() {
+                if (inActiveChat) {
+                    connectWebSocket(context, id);
+                }
+            }, 3000);
+        }
     };
 
     chatWs.onerror = function() {
@@ -91,17 +351,20 @@ function connectWebSocket(context, id) {
 }
 
 function disconnectWebSocket() {
+    inActiveChat = false;
     clearTimeout(reconnectTimer);
     if (chatWs) {
         chatWs.close();
         chatWs = null;
     }
+    streamingMsgEl = null;
 }
 
 function sendMessage() {
-    const input = document.getElementById('chat-input');
-    const content = input.value.trim();
-    if (!content || !chatWs || chatWs.readyState !== WebSocket.OPEN) return;
+    var input = document.getElementById('chat-input');
+    var content = input.value.trim();
+    if (!content || !chatWs
+        || chatWs.readyState !== WebSocket.OPEN) return;
 
     appendMessage('user', content);
     chatWs.send(JSON.stringify({content: content}));
@@ -109,58 +372,163 @@ function sendMessage() {
     showTyping('Thinking...');
 }
 
-function appendMessage(role, content) {
-    const messagesEl = document.getElementById('chat-messages');
-    const msgDiv = document.createElement('div');
+function createMessageEl(role, content) {
+    var messagesEl = document.getElementById('chat-messages');
+    var msgDiv = document.createElement('div');
     msgDiv.className = 'chat-msg chat-msg-' + role;
 
-    const labelEl = document.createElement('div');
+    var labelEl = document.createElement('div');
     labelEl.className = 'chat-msg-label';
     labelEl.textContent = role === 'user' ? 'You' : 'Nano';
 
-    const contentEl = document.createElement('div');
+    var contentEl = document.createElement('div');
     contentEl.className = 'chat-msg-content';
-    contentEl.textContent = content;
+
+    if (role === 'user') {
+        contentEl.textContent = content;
+    } else {
+        contentEl.innerHTML = renderMarkdown(content);
+    }
 
     msgDiv.appendChild(labelEl);
     msgDiv.appendChild(contentEl);
     messagesEl.appendChild(msgDiv);
-    messagesEl.scrollTop = messagesEl.scrollHeight;
+    scrollToBottom();
+    return msgDiv;
+}
+
+function appendMessage(role, content) {
+    createMessageEl(role, content);
 }
 
 function appendStatus(text) {
-    const messagesEl = document.getElementById('chat-messages');
-    const statusEl = document.createElement('div');
+    var messagesEl = document.getElementById('chat-messages');
+    var statusEl = document.createElement('div');
     statusEl.className = 'chat-status';
     statusEl.textContent = text;
     messagesEl.appendChild(statusEl);
+    scrollToBottom();
+}
+
+function scrollToBottom() {
+    var messagesEl = document.getElementById('chat-messages');
     messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
 function showTyping(detail) {
-    let typingEl = document.getElementById('chat-typing');
+    var typingEl = document.getElementById('chat-typing');
     if (!typingEl) {
         typingEl = document.createElement('div');
         typingEl.id = 'chat-typing';
         typingEl.className = 'chat-typing';
-        document.getElementById('chat-messages').appendChild(typingEl);
+        document.getElementById('chat-messages')
+            .appendChild(typingEl);
     }
     typingEl.textContent = detail;
     typingEl.style.display = 'block';
-    document.getElementById('chat-messages').scrollTop =
-        document.getElementById('chat-messages').scrollHeight;
+    scrollToBottom();
 }
 
 function hideTyping() {
-    const typingEl = document.getElementById('chat-typing');
+    var typingEl = document.getElementById('chat-typing');
     if (typingEl) {
         typingEl.style.display = 'none';
     }
 }
 
+/* Intelligence scan launchers */
+
+function launchScan() {
+    var topics =
+        document.getElementById('scan-topics')?.value || '';
+    var region =
+        document.getElementById('scan-region')?.value || '';
+    var industry =
+        document.getElementById('scan-industry')?.value || '';
+    var service =
+        document.getElementById('scan-service')?.value || '';
+
+    var prompt = 'Scan for new market intelligence signals';
+    var refinements = [];
+    if (topics) refinements.push('focused on: ' + topics);
+    if (region) refinements.push('in ' + region);
+    if (industry) {
+        refinements.push(
+            'in the ' + industry + ' industry'
+        );
+    }
+    if (service) {
+        refinements.push(
+            'relevant to our ' + service + ' practice'
+        );
+    }
+
+    if (refinements.length) {
+        prompt += ' ' + refinements.join(', ');
+    }
+    prompt += '. Use scan_news with targeted queries,'
+        + ' then analyze_signals on the results.'
+        + ' Report what you find.';
+
+    openChatAndSend(prompt);
+}
+
+function launchCompanyScan() {
+    var company =
+        document.getElementById('company-name')?.value || '';
+    if (!company) return;
+    openChatAndSend(
+        'Deep dive on ' + company
+        + '. Use scan_company to find recent news,'
+        + ' then analyze_signals to extract'
+        + ' structured signals.'
+        + ' Score the lead and suggest K&P services.'
+    );
+}
+
+function launchScoring() {
+    openChatAndSend(
+        'Score all current leads and match'
+        + ' top leads to consultants.'
+        + ' Generate recommendations for hot leads.'
+        + ' Use score_all and match_consultant tools.'
+    );
+}
+
+/* Compose page helpers */
+
+function openInEmailClient() {
+    var recipient =
+        document.getElementById('recipient')?.value || '';
+    var subject =
+        document.getElementById('subject')?.value || '';
+    var body =
+        document.getElementById('email-body')?.value || '';
+    var mailto = 'mailto:' + encodeURIComponent(recipient)
+        + '?subject=' + encodeURIComponent(subject)
+        + '&body=' + encodeURIComponent(body);
+    window.location.href = mailto;
+}
+
+function regenerateEmail() {
+    var company =
+        document.getElementById('compose-company')
+            ?.value || '';
+    var anrede =
+        document.getElementById('anrede')?.value || '';
+    var nachname =
+        document.getElementById('nachname')?.value || '';
+    openChatAndSend(
+        'Regenerate the outreach email for ' + company
+        + '. Address it to ' + anrede + ' ' + nachname
+        + '. Make it compelling and specific'
+        + ' to their situation.'
+    );
+}
+
 // Handle Enter key in textarea
 document.addEventListener('DOMContentLoaded', function() {
-    const input = document.getElementById('chat-input');
+    var input = document.getElementById('chat-input');
     if (input) {
         input.addEventListener('keydown', function(e) {
             if (e.key === 'Enter' && !e.shiftKey) {

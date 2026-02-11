@@ -1,76 +1,84 @@
 {% extends "base.html" %}
 {% block title %}Signals - K&amp;P Marketing{% endblock %}
 {% block content %}
-<h2>Market Signals</h2>
+<h2 class="text-2xl font-bold text-kp-blue mb-6">Market Signals</h2>
 
-<div class="grid">
-    <div>
-        <label>Status</label>
-        <select onchange="window.location='?status='+this.value">
-            <option value="" {% if current_status == 'all' %}selected{% endif %}>All</option>
-            <option value="new" {% if current_status == 'new' %}selected{% endif %}>New</option>
-            <option value="reviewed" {% if current_status == 'reviewed' %}selected{% endif %}>Reviewed</option>
-            <option value="dismissed" {% if current_status == 'dismissed' %}selected{% endif %}>Dismissed</option>
-        </select>
-    </div>
-    <div>
-        <label>Type</label>
-        <select onchange="window.location='?type='+this.value">
-            <option value="" {% if current_type == 'all' %}selected{% endif %}>All</option>
-            <option value="restructuring">Restructuring</option>
-            <option value="leadership_change">Leadership Change</option>
-            <option value="ma">M&amp;A</option>
-            <option value="digital_transformation">Digital Transformation</option>
-            <option value="expansion">Expansion</option>
-            <option value="cost_cutting">Cost Cutting</option>
-        </select>
+<div class="bg-white rounded-xl shadow-sm p-4 mb-6">
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+            <label class="block text-sm font-medium text-kp-dark mb-1">Status</label>
+            <select onchange="window.location='?status='+this.value"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                <option value="" {% if current_status == 'all' %}selected{% endif %}>All</option>
+                <option value="new" {% if current_status == 'new' %}selected{% endif %}>New</option>
+                <option value="reviewed" {% if current_status == 'reviewed' %}selected{% endif %}>Reviewed</option>
+                <option value="dismissed" {% if current_status == 'dismissed' %}selected{% endif %}>Dismissed</option>
+            </select>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-kp-dark mb-1">Type</label>
+            <select onchange="window.location='?type='+this.value"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                <option value="" {% if current_type == 'all' %}selected{% endif %}>All</option>
+                <option value="restructuring">Restructuring</option>
+                <option value="leadership_change">Leadership Change</option>
+                <option value="ma">M&amp;A</option>
+                <option value="digital_transformation">Digital Transformation</option>
+                <option value="expansion">Expansion</option>
+                <option value="cost_cutting">Cost Cutting</option>
+            </select>
+        </div>
     </div>
 </div>
 
-<table>
-    <thead>
-        <tr>
-            <th>Company</th>
-            <th>Type</th>
-            <th>Title</th>
-            <th>Relevance</th>
-            <th>Status</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for signal in signals %}
-        <tr>
-            <td><strong>{{ signal.company_name }}</strong></td>
-            <td>{{ signal.signal_type }}</td>
-            <td>
-                {{ signal.title }}
-                {% if signal.source_url %}
-                <br><small><a href="{{ signal.source_url }}" target="_blank">{{ signal.source_name }}</a></small>
-                {% endif %}
-            </td>
-            <td>{{ "%.0f" | format(signal.relevance_score * 100) }}%</td>
-            <td>
-                <span class="badge-{{ signal.status }}">{{ signal.status }}</span>
-            </td>
-            <td>
-                {% if signal.status == 'new' %}
-                <form method="post" action="/signals/{{ signal.id }}/review" style="display:inline">
-                    <input type="hidden" name="status" value="reviewed">
-                    <button type="submit" class="outline small">Review</button>
-                </form>
-                <form method="post" action="/signals/{{ signal.id }}/review" style="display:inline">
-                    <input type="hidden" name="status" value="dismissed">
-                    <button type="submit" class="outline secondary small">Dismiss</button>
-                </form>
-                {% endif %}
-                <button class="outline small" onclick="openChat('signal', {{ signal.id }})">Discuss</button>
-            </td>
-        </tr>
-        {% endfor %}
-        {% if not signals %}
-        <tr><td colspan="6">No signals found.</td></tr>
-        {% endif %}
-    </tbody>
-</table>
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-kp-light border-b border-gray-100">
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Company</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Type</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Title</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Relevance</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Status</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for signal in signals %}
+            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200">
+                <td class="px-4 py-3 font-semibold text-kp-dark">{{ signal.company_name }}</td>
+                <td class="px-4 py-3 text-kp-text">{{ signal.signal_type }}</td>
+                <td class="px-4 py-3 text-kp-dark">
+                    {{ signal.title }}
+                    {% if signal.source_url %}
+                    <br><span class="text-xs text-kp-text"><a href="{{ signal.source_url }}" target="_blank" class="text-kp-blue hover:underline">{{ signal.source_name }}</a></span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 text-kp-dark">{{ "%.0f" | format(signal.relevance_score * 100) }}%</td>
+                <td class="px-4 py-3">
+                    <span class="badge-{{ signal.status }}">{{ signal.status }}</span>
+                </td>
+                <td class="px-4 py-3">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        {% if signal.status == 'new' %}
+                        <form method="post" action="/signals/{{ signal.id }}/review" class="inline">
+                            <input type="hidden" name="status" value="reviewed">
+                            <button type="submit" class="text-sm px-3 py-1 rounded-lg border border-kp-blue text-kp-blue hover:bg-kp-blue hover:text-white transition-colors duration-200">Review</button>
+                        </form>
+                        <form method="post" action="/signals/{{ signal.id }}/review" class="inline">
+                            <input type="hidden" name="status" value="dismissed">
+                            <button type="submit" class="text-sm px-3 py-1 rounded-lg border border-gray-300 text-kp-text hover:bg-gray-100 transition-colors duration-200">Dismiss</button>
+                        </form>
+                        {% endif %}
+                        <button class="text-sm px-3 py-1 rounded-lg border border-kp-blue text-kp-blue hover:bg-kp-blue hover:text-white transition-colors duration-200" onclick="openChat('signal', {{ signal.id }})">Discuss</button>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not signals %}
+            <tr><td colspan="6" class="px-4 py-8 text-center text-kp-text">No signals found.</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}

@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block title %}Intelligence Scan{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-kp-blue mb-2">Intelligence Scanner</h2>
+<p class="text-kp-text mb-6">Configure and launch targeted market scans.</p>
+
+<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+    <h3 class="text-lg font-semibold text-kp-dark mb-4">Market News Scan</h3>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        <div>
+            <label for="scan-topics" class="block text-sm font-medium text-kp-dark mb-1">Topics / Keywords</label>
+            <input type="text" id="scan-topics"
+                   placeholder="e.g., Restrukturierung, M&amp;A, Digitalisierung"
+                   class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+        </div>
+        <div>
+            <label for="scan-region" class="block text-sm font-medium text-kp-dark mb-1">Region</label>
+            <select id="scan-region"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                <option value="">All DACH</option>
+                <option value="Deutschland">Germany</option>
+                <option value="Oesterreich">Austria</option>
+                <option value="Schweiz">Switzerland</option>
+            </select>
+        </div>
+    </div>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+        <div>
+            <label for="scan-industry" class="block text-sm font-medium text-kp-dark mb-1">Industry Focus</label>
+            <select id="scan-industry"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                <option value="">All Industries</option>
+                <option value="Automotive">Automotive</option>
+                <option value="Manufacturing">Manufacturing</option>
+                <option value="Financial Services">Financial Services</option>
+                <option value="Healthcare">Healthcare / Pharma</option>
+                <option value="Technology">Technology</option>
+                <option value="Energy">Energy</option>
+                <option value="Logistics">Logistics</option>
+                <option value="Retail">Retail</option>
+            </select>
+        </div>
+        <div>
+            <label for="scan-service" class="block text-sm font-medium text-kp-dark mb-1">K&amp;P Service Focus</label>
+            <select id="scan-service"
+                    class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                <option value="">All Services</option>
+                <option value="Change Management">Change Management</option>
+                <option value="Strategy">Strategy &amp; Innovation</option>
+                <option value="Sales">Sales Management</option>
+                <option value="Leadership">Leadership &amp; Collaboration</option>
+                <option value="Turnaround">Turnaround &amp; Restructuring</option>
+                <option value="Process">Process Optimization</option>
+            </select>
+        </div>
+    </div>
+    <button onclick="launchScan()"
+            class="bg-kp-blue text-white font-semibold rounded-xl px-5 py-2 hover:bg-[#004a7e] transition-colors duration-200">
+        Launch Scan
+    </button>
+</div>
+
+<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+    <h3 class="text-lg font-semibold text-kp-dark mb-4">Company Deep Dive</h3>
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+            <label for="company-name" class="block text-sm font-medium text-kp-dark mb-1">Company Name</label>
+            <input type="text" id="company-name"
+                   placeholder="e.g., Siemens, Deutsche Bank"
+                   class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+        </div>
+        <div class="flex items-end">
+            <button onclick="launchCompanyScan()"
+                    class="bg-kp-blue text-white font-semibold rounded-xl px-5 py-2 hover:bg-[#004a7e] transition-colors duration-200">
+                Scan Company
+            </button>
+        </div>
+    </div>
+</div>
+
+<div class="bg-white rounded-2xl shadow-lg p-6 mb-6">
+    <h3 class="text-lg font-semibold text-kp-dark mb-2">Lead Scoring</h3>
+    <p class="text-kp-text text-sm mb-4">Score all companies with signals and generate recommendations.</p>
+    <button onclick="launchScoring()"
+            class="bg-kp-blue text-white font-semibold rounded-xl px-5 py-2 hover:bg-[#004a7e] transition-colors duration-200">
+        Score All Leads
+    </button>
+</div>
+{% endblock %}

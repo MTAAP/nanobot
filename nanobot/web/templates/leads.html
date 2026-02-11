@@ -1,37 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Leads - K&amp;P Marketing{% endblock %}
 {% block content %}
-<h2>Lead Pipeline</h2>
+<h2 class="text-2xl font-bold text-kp-blue mb-6">Lead Pipeline</h2>
 
-<table>
-    <thead>
-        <tr>
-            <th>Company</th>
-            <th>Signals</th>
-            <th>Avg Relevance</th>
-            <th>Tier</th>
-            <th>Top Signal</th>
-            <th>Actions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for lead in leads %}
-        <tr>
-            <td><strong>{{ lead.company_name }}</strong></td>
-            <td>{{ lead.signal_count }}</td>
-            <td>{{ "%.0f" | format(lead.avg_relevance * 100) }}%</td>
-            <td>
-                <span class="tier-{{ lead.tier }}">{{ lead.tier }}</span>
-            </td>
-            <td>{{ lead.top_signal }}</td>
-            <td>
-                <button class="outline small" onclick="openChat('lead', '{{ lead.company_name }}')">Discuss</button>
-            </td>
-        </tr>
-        {% endfor %}
-        {% if not leads %}
-        <tr><td colspan="6">No leads found.</td></tr>
-        {% endif %}
-    </tbody>
-</table>
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-kp-light border-b border-gray-100">
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Company</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Signals</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Avg Relevance</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Tier</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Top Signal</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for lead in leads %}
+            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200">
+                <td class="px-4 py-3 font-semibold text-kp-dark">{{ lead.company_name }}</td>
+                <td class="px-4 py-3 text-kp-dark">{{ lead.signal_count }}</td>
+                <td class="px-4 py-3 text-kp-dark">{{ "%.0f" | format(lead.avg_relevance * 100) }}%</td>
+                <td class="px-4 py-3">
+                    <span class="tier-{{ lead.tier }}">{{ lead.tier }}</span>
+                </td>
+                <td class="px-4 py-3 text-kp-text">{{ lead.top_signal }}</td>
+                <td class="px-4 py-3">
+                    <button class="text-sm px-3 py-1 rounded-lg border border-kp-blue text-kp-blue hover:bg-kp-blue hover:text-white transition-colors duration-200" onclick="openChat('lead', '{{ lead.company_name }}')">Discuss</button>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not leads %}
+            <tr><td colspan="6" class="px-4 py-8 text-center text-kp-text">No leads found.</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}

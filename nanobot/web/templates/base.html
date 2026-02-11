@@ -1,29 +1,53 @@
 <!DOCTYPE html>
-<html lang="de" data-theme="light">
+<html lang="de">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}K&amp;P Marketing Assistant{% endblock %}</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    'kp-blue': '#005c9d',
+                    'kp-dark': '#213448',
+                    'kp-text': '#545454',
+                    'kp-gold': '#f1bc7a',
+                    'kp-light': '#f6f9fe',
+                    'kp-warm': '#faf9f5',
+                    'kp-green': '#17a43d',
+                    'kp-teal': '#16b4ba',
+                },
+                fontFamily: {
+                    poppins: ['Poppins', 'sans-serif'],
+                },
+            },
+        },
+    }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
-<body>
-    <nav class="container-fluid">
-        <ul>
-            <li><strong>K&amp;P Marketing</strong></li>
-        </ul>
-        <ul>
-            <li><a href="/signals">Signals</a></li>
-            <li><a href="/leads">Leads</a></li>
-            <li><a href="/recommendations">Recommendations</a></li>
-            <li><a href="/reports">Reports</a></li>
-            <li><a href="javascript:void(0)" onclick="openChat()">Chat</a></li>
-            <li><a href="/settings">Settings</a></li>
-            <li><a href="/logout">Logout</a></li>
-        </ul>
+<body class="font-poppins text-kp-dark bg-kp-light min-h-screen flex flex-col">
+    <nav class="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
+        <div class="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
+            <a href="/signals" class="text-kp-blue font-bold text-xl tracking-tight">K&amp;P Marketing</a>
+            <div class="flex items-center gap-5 text-sm font-medium">
+                <a href="/signals" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Signals</a>
+                <a href="/leads" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Leads</a>
+                <a href="/recommendations" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Recommendations</a>
+                <a href="/intelligence" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Intelligence</a>
+                <a href="/reports" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Reports</a>
+                <a href="javascript:void(0)" onclick="openChat()" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Chat</a>
+                <a href="/settings" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Settings</a>
+                <a href="/logout" class="text-kp-text hover:text-red-600 transition-colors duration-200">Logout</a>
+            </div>
+        </div>
     </nav>
-    <main class="container">
+    <main class="max-w-7xl mx-auto px-6 py-8 flex-1 w-full">
         {% block content %}{% endblock %}
     </main>
     <!-- Chat sidebar -->
@@ -38,8 +62,8 @@
             <button onclick="sendMessage()">Send</button>
         </div>
     </aside>
-    <footer class="container">
-        <small>K&amp;P Marketing Assistant &mdash; Powered by Nanobot</small>
+    <footer class="bg-kp-blue text-white text-center py-6 mt-auto">
+        <small class="text-white/80">K&amp;P Marketing Assistant &mdash; Powered by Nanobot</small>
     </footer>
     <script src="/static/chat.js"></script>
 </body>

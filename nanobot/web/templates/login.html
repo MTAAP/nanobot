@@ -1,27 +1,56 @@
 <!DOCTYPE html>
-<html lang="de" data-theme="light">
+<html lang="de">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Login - K&amp;P Marketing</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    'kp-blue': '#005c9d',
+                    'kp-dark': '#213448',
+                    'kp-light': '#f6f9fe',
+                },
+                fontFamily: {
+                    poppins: ['Poppins', 'sans-serif'],
+                },
+            },
+        },
+    }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
-<body>
-    <main class="container" style="max-width: 400px; margin-top: 10vh;">
-        <article>
-            <h2>K&amp;P Marketing Assistant</h2>
-            {% if error %}
-            <p style="color: var(--pico-color-red-500);">{{ error }}</p>
-            {% endif %}
-            <form method="post" action="/login">
-                <label for="username">Username</label>
-                <input type="text" id="username" name="username" required autofocus>
-                <label for="password">Password</label>
-                <input type="password" id="password" name="password" required>
-                <button type="submit">Login</button>
-            </form>
-        </article>
-    </main>
+<body class="font-poppins bg-kp-light min-h-screen flex items-center justify-center">
+    <div class="w-full max-w-md">
+        <div class="bg-white rounded-2xl shadow-lg overflow-hidden">
+            <div class="h-1.5 bg-kp-blue"></div>
+            <div class="p-8">
+                <h2 class="text-2xl font-bold text-kp-blue mb-1">K&amp;P Marketing</h2>
+                <p class="text-sm text-kp-dark/60 mb-6">Sign in to continue</p>
+                {% if error %}
+                <div class="bg-red-50 text-red-700 text-sm rounded-lg px-4 py-3 mb-4">{{ error }}</div>
+                {% endif %}
+                <form method="post" action="/login" class="space-y-4">
+                    <div>
+                        <label for="username" class="block text-sm font-medium text-kp-dark mb-1">Username</label>
+                        <input type="text" id="username" name="username" required autofocus
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                    </div>
+                    <div>
+                        <label for="password" class="block text-sm font-medium text-kp-dark mb-1">Password</label>
+                        <input type="password" id="password" name="password" required
+                               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+                    </div>
+                    <button type="submit"
+                            class="w-full bg-kp-blue text-white font-semibold rounded-xl px-4 py-2.5 hover:bg-[#004a7e] transition-colors duration-200">
+                        Login
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

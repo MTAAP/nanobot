@@ -1,10 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Report - K&amp;P Marketing{% endblock %}
 {% block content %}
-<h2>{{ report.title }}</h2>
-<p><small>{{ report.report_type }} &mdash; {{ report.created_at }}</small></p>
-<article>
+<div class="mb-6">
+    <h2 class="text-2xl font-bold text-kp-blue">{{ report.title }}</h2>
+    <p class="text-sm text-kp-text mt-1">{{ report.report_type }} &mdash; {{ report.created_at }}</p>
+</div>
+
+<div class="bg-white rounded-2xl shadow-lg p-6 mb-6 prose prose-sm max-w-none text-kp-dark">
     {{ report.content | safe }}
-</article>
-<a href="/reports" role="button" class="outline">Back to Reports</a>
+</div>
+
+<a href="/reports" class="inline-block text-sm px-4 py-2 rounded-xl border border-kp-blue text-kp-blue font-semibold hover:bg-kp-blue hover:text-white transition-colors duration-200">Back to Reports</a>
 {% endblock %}

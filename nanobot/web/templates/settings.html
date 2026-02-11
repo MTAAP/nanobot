@@ -1,30 +1,33 @@
 {% extends "base.html" %}
 {% block title %}Settings - K&amp;P Marketing{% endblock %}
 {% block content %}
-<h2>Settings</h2>
+<h2 class="text-2xl font-bold text-kp-blue mb-6">Settings</h2>
 
-<h3>Consultants</h3>
-<table>
-    <thead>
-        <tr>
-            <th>Name</th>
-            <th>Specializations</th>
-            <th>Industries</th>
-            <th>Regions</th>
-        </tr>
-    </thead>
-    <tbody>
-        {% for c in consultants %}
-        <tr>
-            <td><strong>{{ c.name }}</strong></td>
-            <td>{{ c.specializations | join(", ") if c.specializations else "-" }}</td>
-            <td>{{ c.industries | join(", ") if c.industries else "-" }}</td>
-            <td>{{ c.regions | join(", ") if c.regions else "-" }}</td>
-        </tr>
-        {% endfor %}
-        {% if not consultants %}
-        <tr><td colspan="4">No consultants configured.</td></tr>
-        {% endif %}
-    </tbody>
-</table>
+<h3 class="text-lg font-semibold text-kp-dark mb-4">Consultants</h3>
+
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-kp-light border-b border-gray-100">
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Name</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Specializations</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Industries</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Regions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for c in consultants %}
+            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200">
+                <td class="px-4 py-3 font-semibold text-kp-dark">{{ c.name }}</td>
+                <td class="px-4 py-3 text-kp-text">{{ c.specializations | join(", ") if c.specializations else "-" }}</td>
+                <td class="px-4 py-3 text-kp-text">{{ c.industries | join(", ") if c.industries else "-" }}</td>
+                <td class="px-4 py-3 text-kp-text">{{ c.regions | join(", ") if c.regions else "-" }}</td>
+            </tr>
+            {% endfor %}
+            {% if not consultants %}
+            <tr><td colspan="4" class="px-4 py-8 text-center text-kp-text">No consultants configured.</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
 {% endblock %}
