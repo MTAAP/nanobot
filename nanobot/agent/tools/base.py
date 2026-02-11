@@ -1,6 +1,7 @@
 """Base class for agent tools."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 
@@ -11,6 +12,13 @@ class Tool(ABC):
     Tools are capabilities that the agent can use to interact with
     the environment, such as reading files, executing commands, etc.
     """
+
+    _progress: Callable[[str], Awaitable[None]] | None = None
+
+    async def report_progress(self, detail: str) -> None:
+        """Report progress to the client (typing indicator) if a callback is set."""
+        if self._progress:
+            await self._progress(detail)
 
     _TYPE_MAP = {
         "string": str,

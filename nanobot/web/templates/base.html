@@ -41,8 +41,18 @@
                 <a href="/recommendations" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Recommendations</a>
                 <a href="/intelligence" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Intelligence</a>
                 <a href="/reports" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Reports</a>
+                <a href="/tasks" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Tasks</a>
                 <a href="javascript:void(0)" onclick="openChat()" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Chat</a>
                 <a href="/settings" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Settings</a>
+                <div class="relative" id="notif-wrapper">
+                    <button onclick="toggleNotifications()" class="relative text-kp-dark hover:text-kp-blue transition-colors duration-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                            <path d="M10 2a6 6 0 00-6 6v3.586l-.707.707A1 1 0 004 14h12a1 1 0 00.707-1.707L16 11.586V8a6 6 0 00-6-6zM10 18a3 3 0 01-3-3h6a3 3 0 01-3 3z"/>
+                        </svg>
+                        <span id="notif-badge" class="hidden absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-4 h-4 flex items-center justify-center" style="font-size:0.6rem;line-height:1">0</span>
+                    </button>
+                    <div id="notif-dropdown" class="hidden absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-lg border border-gray-100 z-50 max-h-96 overflow-y-auto"></div>
+                </div>
                 <a href="/logout" class="text-kp-text hover:text-red-600 transition-colors duration-200">Logout</a>
             </div>
         </div>

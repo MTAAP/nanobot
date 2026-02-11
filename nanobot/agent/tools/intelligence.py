@@ -2,10 +2,41 @@
 
 import json
 from typing import Any
+from urllib.parse import urlparse
 
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool
+
+DEEP_SCAN_QUERIES = [
+    # Restructuring / turnaround
+    "Restrukturierung Unternehmen Deutschland 2026",
+    "Insolvenz Sanierung Mittelstand 2026",
+    "Stellenabbau Massenentlassung DACH",
+    "Turnaround Krise Unternehmen Deutschland",
+    # Leadership changes
+    "CEO Wechsel DAX MDAX SDAX 2026",
+    "Vorstandswechsel Geschäftsführer 2026",
+    "Führungskrise Unternehmen Deutschland",
+    # M&A
+    "Übernahme Fusion Unternehmen Deutschland 2026",
+    "Unternehmensverkauf Akquisition DACH",
+    # Digital transformation
+    "digitale Transformation Mittelstand 2026",
+    "Digitalisierung Herausforderung Unternehmen",
+    # Cost cutting / efficiency
+    "Kostensenkung Effizienzprogramm Industrie 2026",
+    "Lean Management Prozessoptimierung Unternehmen",
+    # Industry verticals
+    "Automobilindustrie Umbau Transformation 2026",
+    "Maschinenbau Krise Wandel Deutschland",
+    "Energiewirtschaft Transformation Unternehmen",
+    "Finanzbranche Restrukturierung Bank Versicherung",
+    # English sources for broader coverage
+    "German company restructuring layoffs 2026",
+    "DACH CEO change leadership transition 2026",
+    "German Mittelstand digital transformation challenges",
+]
 
 
 class MarketIntelligenceTool(Tool):
@@ -22,11 +53,13 @@ class MarketIntelligenceTool(Tool):
         provider: Any = None,
         model: str | None = None,
         search_queries: list[str] | None = None,
+        notification_store: Any = None,
     ):
         self._store = intel_store
         self._brave_api_key = brave_api_key
         self._provider = provider
         self._model = model
+        self._notification_store = notification_store
         self._search_queries = search_queries or [
             "Umstrukturierung Deutschland Unternehmen",
             "CEO Wechsel DAX MDAX",
@@ -44,8 +77,9 @@ class MarketIntelligenceTool(Tool):
     def description(self) -> str:
         return (
             "Gather and analyze market intelligence for consulting "
-            "opportunities. Actions: scan_news (batch search for "
-            "signals), scan_company (deep-dive on a company), "
+            "opportunities. Actions: deep_scan (comprehensive search, "
+            "fetch, analyze, and store in one pass), scan_news (batch "
+            "search for signals), scan_company (deep-dive on a company), "
             "analyze_signals (extract structured signals from text), "
             "generate_report (create intelligence report), "
             "get_signal_stats (view signal statistics)."
@@ -59,6 +93,7 @@ class MarketIntelligenceTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": [
+                        "deep_scan",
                         "scan_news",
                         "scan_company",
                         "analyze_signals",
@@ -92,6 +127,10 @@ class MarketIntelligenceTool(Tool):
                     "type": "integer",
                     "description": "Max results per query",
                 },
+                "max_fetch": {
+                    "type": "integer",
+                    "description": "Max articles to fetch for deep_scan (default 15)",
+                },
             },
             "required": ["action"],
         }
@@ -105,10 +144,13 @@ class MarketIntelligenceTool(Tool):
         source_name: str | None = None,
         queries: list[str] | None = None,
         limit: int = 5,
+        max_fetch: int = 15,
         **kwargs: Any,
     ) -> str:
         try:
-            if action == "scan_news":
+            if action == "deep_scan":
+                return await self._deep_scan(queries, limit, max_fetch)
+            elif action == "scan_news":
                 return await self._scan_news(queries, limit)
             elif action == "scan_company":
                 return await self._scan_company(company_name, limit)
@@ -122,6 +164,120 @@ class MarketIntelligenceTool(Tool):
                 return f"Error: Unknown action '{action}'"
         except Exception as e:
             return f"Error: {e}"
+
+    async def _deep_scan(
+        self,
+        queries: list[str] | None,
+        limit: int,
+        max_fetch: int,
+    ) -> str:
+        """Search, fetch articles, analyze signals, and store -- all in one pass."""
+        if not self._brave_api_key:
+            return "Error: No Brave API key configured. Cannot perform web searches."
+        if not self._provider:
+            return "Error: No LLM provider configured for signal analysis."
+
+        from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+
+        searcher = WebSearchTool(api_key=self._brave_api_key)
+        fetcher = WebFetchTool(max_chars=6000)
+        search_queries = queries or DEEP_SCAN_QUERIES
+        total_queries = len(search_queries)
+
+        # Phase 1: Search
+        all_urls: dict[str, str] = {}  # url -> snippet
+        for i, query in enumerate(search_queries, 1):
+            await self.report_progress(f"Searching {i}/{total_queries}: {query[:50]}")
+            try:
+                result_text = await searcher.execute(query=query, count=limit)
+                # Extract URLs from the result text
+                for line in result_text.split("\n"):
+                    line = line.strip()
+                    if line.startswith("http://") or line.startswith("https://"):
+                        url = line.split()[0]
+                        if url not in all_urls:
+                            all_urls[url] = query
+            except Exception as e:
+                logger.warning(f"Deep scan search failed for '{query}': {e}")
+
+        if not all_urls:
+            return "No search results found across all queries."
+
+        # Phase 2: Fetch top articles (deduplicated)
+        urls_to_fetch = list(all_urls.keys())[:max_fetch]
+        total_fetch = len(urls_to_fetch)
+        fetched_articles: list[dict[str, str]] = []
+
+        for i, url in enumerate(urls_to_fetch, 1):
+            domain = urlparse(url).netloc
+            await self.report_progress(f"Reading article {i}/{total_fetch}: {domain}")
+            try:
+                raw = await fetcher.execute(url=url)
+                data = json.loads(raw)
+                text = data.get("text", "")
+                if text and len(text) > 200:
+                    fetched_articles.append(
+                        {
+                            "url": url,
+                            "domain": domain,
+                            "text": text[:4000],
+                        }
+                    )
+            except Exception as e:
+                logger.warning(f"Deep scan fetch failed for {url}: {e}")
+
+        if not fetched_articles:
+            return (
+                f"Searched {total_queries} queries, found {len(all_urls)} URLs, "
+                f"but could not fetch any articles."
+            )
+
+        # Phase 3: Analyze each article
+        total_articles = len(fetched_articles)
+        all_signals: list[dict[str, Any]] = []
+
+        for i, article in enumerate(fetched_articles, 1):
+            await self.report_progress(f"Analyzing {i}/{total_articles}: {article['domain']}")
+            result = await self._analyze_signals(
+                article["text"],
+                article["url"],
+                article["domain"],
+            )
+            # Count signals from the result line
+            if result.startswith("Extracted"):
+                all_signals.append(
+                    {
+                        "source": article["domain"],
+                        "url": article["url"],
+                        "result": result,
+                    }
+                )
+
+        # Phase 4: Summary
+        lines = [
+            f"Deep scan complete: {total_queries} queries, "
+            f"{len(all_urls)} URLs found, {total_fetch} articles fetched, "
+            f"{total_articles} analyzed.\n"
+        ]
+        if all_signals:
+            lines.append(f"{len(all_signals)} source(s) yielded signals:\n")
+            for sig in all_signals:
+                lines.append(f"### {sig['source']}")
+                lines.append(sig["result"])
+                lines.append("")
+        else:
+            lines.append("No signals extracted from fetched articles.")
+
+        # Emit scan_complete notification
+        if self._notification_store:
+            self._notification_store.add(
+                title="Deep scan complete",
+                body=f"{len(all_signals)} source(s) yielded signals",
+                category="scan_complete",
+                link="/tasks",
+            )
+
+        return "\n".join(lines)
 
     async def _scan_news(self, queries: list[str] | None, limit: int) -> str:
         """Batch search for market signals via Brave API."""
@@ -228,7 +384,7 @@ class MarketIntelligenceTool(Tool):
             '"kp_service_match": "best matching service area"}\n\n'
             "Only include clearly identified signals. "
             "If none found, output [].\n\n"
-            f"Text to analyze:\n{text[:3000]}\n\nJSON:"
+            f"Text to analyze:\n{text[:8000]}\n\nJSON:"
         )
 
         response = await self._provider.chat(

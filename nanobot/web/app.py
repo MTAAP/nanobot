@@ -19,6 +19,9 @@ def create_app(
     message_bus: Any = None,
     agent: Any = None,
     web_channel: Any = None,
+    cron_service: Any = None,
+    notification_store: Any = None,
+    timezone: str = "UTC",
 ) -> FastAPI:
     """Create the FastAPI dashboard application."""
     app = FastAPI(
@@ -35,6 +38,9 @@ def create_app(
     app.state.message_bus = message_bus
     app.state.agent = agent
     app.state.web_channel = web_channel
+    app.state.cron_service = cron_service
+    app.state.notification_store = notification_store
+    app.state.timezone = timezone
 
     # Static files and templates
     static_dir = Path(__file__).parent / "static"
@@ -57,6 +63,7 @@ def create_app(
     from nanobot.web.routes.reports import router as reports_router
     from nanobot.web.routes.settings import router as settings_router
     from nanobot.web.routes.signals import router as signals_router
+    from nanobot.web.routes.tasks import router as tasks_router
 
     app.include_router(signals_router)
     app.include_router(leads_router)
@@ -64,6 +71,7 @@ def create_app(
     app.include_router(intel_router)
     app.include_router(reports_router)
     app.include_router(chat_router)
+    app.include_router(tasks_router)
     app.include_router(settings_router)
 
     # Auth routes

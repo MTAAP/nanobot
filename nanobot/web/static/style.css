@@ -57,6 +57,69 @@
     border-radius: 9999px;
 }
 
+/* Task status badges */
+.badge-ok {
+    display: inline-block;
+    background: #dcfce7;
+    color: #15803d;
+    font-weight: 600;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+}
+.badge-error {
+    display: inline-block;
+    background: #fef2f2;
+    color: #b91c1c;
+    font-weight: 600;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+}
+.badge-pending {
+    display: inline-block;
+    background: #f3f4f6;
+    color: #6b7280;
+    font-weight: 600;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+}
+.badge-running {
+    display: inline-block;
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-weight: 600;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.625rem;
+    border-radius: 9999px;
+    animation: pulse-badge 1.5s ease-in-out infinite;
+}
+@keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* Notification dropdown */
+.notif-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    padding: 0.625rem 0.75rem;
+    border-bottom: 1px solid #f3f4f6;
+    cursor: pointer;
+    transition: background-color 0.15s;
+}
+.notif-item:hover {
+    background: #f6f9fe;
+}
+.notif-item:last-child {
+    border-bottom: none;
+}
+.notif-unread {
+    font-weight: 600;
+}
+
 /* Chat sidebar */
 .chat-sidebar {
     position: fixed;

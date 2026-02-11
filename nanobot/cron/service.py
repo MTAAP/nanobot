@@ -43,6 +43,7 @@ class CronService:
         self.on_job = on_job
         self._running = False
         self._missed_jobs: list[str] = []
+        self._executing: set[str] = set()  # job IDs currently running
 
         # SQLite paths
         data_dir = store_path.parent
@@ -257,6 +258,7 @@ class CronService:
     async def _execute_job(self, job: CronJob) -> None:
         """Execute a single job with retry logic."""
         start_ms = _now_ms()
+        self._executing.add(job.id)
         logger.info(f"Cron: executing job '{job.name}' ({job.id})")
 
         try:
@@ -279,6 +281,9 @@ class CronService:
             job.state.last_error = str(e)[:500]
             logger.error(f"Cron: job '{job.name}' failed: {e}")
             self._maybe_retry(job)
+
+        finally:
+            self._executing.discard(job.id)
 
         job.state.last_run_at_ms = start_ms
 
@@ -592,7 +597,7 @@ class CronService:
         return job
 
     async def run_job(self, job_id: str, force: bool = False) -> bool:
-        """Manually run a job."""
+        """Manually run a job (blocking -- awaits completion)."""
         self._ensure_db()
         job = self._load_job_metadata(job_id)
         if not job:
@@ -601,6 +606,21 @@ class CronService:
             return False
         await self._execute_job(job)
         return True
+
+    def run_job_async(self, job_id: str) -> bool:
+        """Fire-and-forget job execution. Returns True if job was found and started."""
+        self._ensure_db()
+        if job_id in self._executing:
+            return True  # Already running
+        job = self._load_job_metadata(job_id)
+        if not job:
+            return False
+        asyncio.create_task(self._execute_job(job))
+        return True
+
+    def is_running(self, job_id: str) -> bool:
+        """Check if a job is currently executing."""
+        return job_id in self._executing
 
     def status(self) -> dict:
         """Get service status."""

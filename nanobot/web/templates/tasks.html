@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block title %}Tasks - K&amp;P Marketing{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-kp-blue mb-6">Scheduled Tasks</h2>
+
+<!-- Scheduled Jobs Table -->
+<div class="bg-white rounded-xl shadow-sm overflow-hidden mb-8">
+    <table class="w-full text-sm" id="jobs-table">
+        <thead>
+            <tr class="bg-kp-light border-b border-gray-100">
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Name</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Schedule</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Status</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Last Run</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Next Run</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for job in jobs %}
+            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200" id="job-{{ job.id }}">
+                <td class="px-4 py-3">
+                    <div class="font-semibold text-kp-dark">{{ job.name }}</div>
+                    <div class="text-xs text-kp-text mt-0.5">{{ job.message_preview }}</div>
+                </td>
+                <td class="px-4 py-3 text-kp-text">{{ job.schedule }}</td>
+                <td class="px-4 py-3" id="status-{{ job.id }}">
+                    {% if job.running %}
+                        <span class="badge-running">running</span>
+                    {% elif not job.enabled %}
+                        <span class="badge-pending">disabled</span>
+                    {% elif job.last_status == 'ok' %}
+                        <span class="badge-ok">ok</span>
+                    {% elif job.last_status == 'error' %}
+                        <span class="badge-error">error</span>
+                    {% else %}
+                        <span class="badge-pending">pending</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 text-kp-text text-xs">{{ job.last_run or '&mdash;' }}</td>
+                <td class="px-4 py-3 text-kp-text text-xs">{{ job.next_run or '&mdash;' }}</td>
+                <td class="px-4 py-3">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <button onclick="toggleJob('{{ job.id }}')"
+                                class="text-xs px-2.5 py-1 rounded-lg border border-gray-300 text-kp-text hover:bg-gray-100 transition-colors duration-200"
+                                id="toggle-{{ job.id }}">
+                            {{ 'Disable' if job.enabled else 'Enable' }}
+                        </button>
+                        <button onclick="runJob('{{ job.id }}')"
+                                id="run-{{ job.id }}"
+                                class="text-xs px-2.5 py-1 rounded-lg border border-kp-blue text-kp-blue hover:bg-kp-blue hover:text-white transition-colors duration-200"
+                                {% if job.running %}disabled{% endif %}>
+                            {{ 'Running...' if job.running else 'Run Now' }}
+                        </button>
+                        <button onclick="viewTranscript('{{ job.id }}')"
+                                class="text-xs px-2.5 py-1 rounded-lg border border-kp-teal text-kp-teal hover:bg-kp-teal hover:text-white transition-colors duration-200">
+                            Transcript
+                        </button>
+                        <button onclick="deleteJob('{{ job.id }}')"
+                                class="text-xs px-2.5 py-1 rounded-lg border border-red-300 text-red-500 hover:bg-red-500 hover:text-white transition-colors duration-200">
+                            Delete
+                        </button>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not jobs %}
+            <tr><td colspan="6" class="px-4 py-8 text-center text-kp-text">No scheduled tasks.</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Recent Activity -->
+<h3 class="text-lg font-bold text-kp-blue mb-4">Recent Activity</h3>
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    {% if recent_activity %}
+    <ul class="divide-y divide-gray-100">
+        {% for n in recent_activity %}
+        <li class="px-4 py-3 flex items-center gap-3">
+            {% if n.category == 'cron_ok' %}
+                <span class="badge-ok">ok</span>
+            {% elif n.category == 'cron_error' %}
+                <span class="badge-error">error</span>
+            {% elif n.category == 'scan_complete' %}
+                <span class="badge-ok">scan</span>
+            {% else %}
+                <span class="badge-pending">info</span>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+                <div class="text-sm text-kp-dark font-medium truncate">{{ n.title }}</div>
+                {% if n.body %}
+                <div class="text-xs text-kp-text truncate">{{ n.body }}</div>
+                {% endif %}
+            </div>
+            <span class="text-xs text-kp-text whitespace-nowrap">{{ n.created_at }}</span>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="px-4 py-8 text-center text-kp-text">No recent activity.</div>
+    {% endif %}
+</div>
+
+<script>
+var _pollTimer = null;
+var _anyRunning = false;
+
+function toggleJob(id) {
+    fetch('/tasks/api/jobs/' + id + '/toggle', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) location.reload();
+        });
+}
+
+function runJob(id) {
+    var btn = document.getElementById('run-' + id);
+    if (btn) {
+        btn.textContent = 'Running...';
+        btn.disabled = true;
+    }
+    var statusCell = document.getElementById('status-' + id);
+    if (statusCell) {
+        statusCell.innerHTML = '<span class="badge-running">running</span>';
+    }
+    fetch('/tasks/api/jobs/' + id + '/run', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function() { startPolling(); });
+}
+
+function deleteJob(id) {
+    if (!confirm('Delete this job permanently?')) return;
+    fetch('/tasks/api/jobs/' + id + '/delete', {method: 'POST'})
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.ok) {
+                var row = document.getElementById('job-' + id);
+                if (row) row.remove();
+            }
+        });
+}
+
+function viewTranscript(jobId) {
+    fetch('/tasks/api/jobs/' + jobId + '/transcript')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.messages && data.messages.length > 0) {
+                // Disconnect any active chat WS first
+                disconnectWebSocket();
+
+                // Set up sidebar in read-only transcript mode
+                var titleEl = document.getElementById('chat-title');
+                if (titleEl) titleEl.textContent = 'Job Transcript';
+
+                var messagesEl = document.getElementById('chat-messages');
+                messagesEl.innerHTML = '';
+
+                showBackButton();
+                hideInputArea();
+
+                // Render each message
+                data.messages.forEach(function(msg) {
+                    appendMessage(
+                        msg.role === 'user' ? 'user' : 'nano',
+                        msg.content
+                    );
+                });
+
+                // Show sidebar
+                var sidebar = document.getElementById('chat-sidebar');
+                if (sidebar) {
+                    sidebar.classList.remove('hidden');
+                    document.body.classList.add('chat-open');
+                }
+            } else {
+                alert('No transcript available for this job yet.');
+            }
+        })
+        .catch(function() {
+            alert('Failed to load transcript.');
+        });
+}
+
+function refreshJobs() {
+    fetch('/tasks/api/jobs')
+        .then(function(r) { return r.json(); })
+        .then(function(jobs) {
+            _anyRunning = false;
+            jobs.forEach(function(job) {
+                var btn = document.getElementById('run-' + job.id);
+                var statusCell = document.getElementById('status-' + job.id);
+                if (job.running) {
+                    _anyRunning = true;
+                    if (btn) { btn.textContent = 'Running...'; btn.disabled = true; }
+                    if (statusCell) {
+                        statusCell.innerHTML = '<span class="badge-running">running</span>';
+                    }
+                } else {
+                    if (btn) { btn.textContent = 'Run Now'; btn.disabled = false; }
+                    if (statusCell) {
+                        if (!job.enabled) {
+                            statusCell.innerHTML = '<span class="badge-pending">disabled</span>';
+                        } else if (job.last_status === 'ok') {
+                            statusCell.innerHTML = '<span class="badge-ok">ok</span>';
+                        } else if (job.last_status === 'error') {
+                            statusCell.innerHTML = '<span class="badge-error">error</span>';
+                        } else {
+                            statusCell.innerHTML = '<span class="badge-pending">pending</span>';
+                        }
+                    }
+                }
+            });
+            if (!_anyRunning) stopPolling();
+        });
+}
+
+function startPolling() {
+    if (_pollTimer) return;
+    _anyRunning = true;
+    _pollTimer = setInterval(refreshJobs, 3000);
+}
+
+function stopPolling() {
+    if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+}
+
+// On page load, start polling if any job is already running
+(function() {
+    var hasRunning = document.querySelector('.badge-running');
+    if (hasRunning) startPolling();
+})();
+</script>
+{% endblock %}

@@ -466,9 +466,9 @@ function launchScan() {
     if (refinements.length) {
         prompt += ' ' + refinements.join(', ');
     }
-    prompt += '. Use scan_news with targeted queries,'
-        + ' then analyze_signals on the results.'
-        + ' Report what you find.';
+    prompt += '. Use market_intelligence deep_scan to perform'
+        + ' a comprehensive search, fetch articles,'
+        + ' and extract signals. Report what you find.';
 
     openChatAndSend(prompt);
 }
@@ -537,4 +537,123 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+    // Start notification polling
+    pollUnreadCount();
+    setInterval(pollUnreadCount, 30000);
+
+    // Close dropdown on outside click
+    document.addEventListener('click', function(e) {
+        var wrapper = document.getElementById('notif-wrapper');
+        var dropdown = document.getElementById('notif-dropdown');
+        if (wrapper && dropdown && !wrapper.contains(e.target)) {
+            dropdown.classList.add('hidden');
+        }
+    });
 });
+
+/* Notification bell */
+
+function pollUnreadCount() {
+    fetch('/notifications/api/unread-count')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var badge = document.getElementById('notif-badge');
+            if (!badge) return;
+            var count = data.count || 0;
+            if (count > 0) {
+                badge.textContent = count > 99 ? '99+' : count;
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+        })
+        .catch(function() {});
+}
+
+function toggleNotifications() {
+    var dropdown = document.getElementById('notif-dropdown');
+    if (!dropdown) return;
+
+    if (dropdown.classList.contains('hidden')) {
+        dropdown.classList.remove('hidden');
+        loadNotifications();
+        // Mark all as read
+        fetch('/notifications/api/mark-read', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({})
+        }).then(function() {
+            var badge = document.getElementById('notif-badge');
+            if (badge) badge.classList.add('hidden');
+        }).catch(function() {});
+    } else {
+        dropdown.classList.add('hidden');
+    }
+}
+
+function loadNotifications() {
+    var dropdown = document.getElementById('notif-dropdown');
+    if (!dropdown) return;
+
+    dropdown.innerHTML =
+        '<div class="px-3 py-2 text-xs text-kp-text">Loading...</div>';
+
+    fetch('/notifications/api/recent')
+        .then(function(r) { return r.json(); })
+        .then(function(items) {
+            if (!items || items.length === 0) {
+                dropdown.innerHTML =
+                    '<div class="px-3 py-4 text-sm text-kp-text'
+                    + ' text-center">No notifications</div>';
+                return;
+            }
+            dropdown.innerHTML = '';
+            items.forEach(function(n) {
+                var el = document.createElement('div');
+                el.className = 'notif-item'
+                    + (n.read ? '' : ' notif-unread');
+
+                var catBadge = '';
+                if (n.category === 'cron_ok') {
+                    catBadge = '<span class="badge-ok">ok</span>';
+                } else if (n.category === 'cron_error') {
+                    catBadge =
+                        '<span class="badge-error">error</span>';
+                } else if (n.category === 'scan_complete') {
+                    catBadge = '<span class="badge-ok">scan</span>';
+                }
+
+                var bodyHtml = n.body
+                    ? '<div class="text-xs text-kp-text truncate">'
+                      + escapeHtml(n.body) + '</div>'
+                    : '';
+
+                el.innerHTML = catBadge
+                    + '<div class="flex-1 min-w-0">'
+                    + '<div class="text-sm text-kp-dark truncate">'
+                    + escapeHtml(n.title) + '</div>'
+                    + bodyHtml
+                    + '<div class="text-xs text-kp-text mt-0.5">'
+                    + escapeHtml(n.created_at || '') + '</div>'
+                    + '</div>';
+
+                if (n.link) {
+                    el.onclick = function() {
+                        window.location.href = n.link;
+                    };
+                }
+                dropdown.appendChild(el);
+            });
+        })
+        .catch(function() {
+            dropdown.innerHTML =
+                '<div class="px-3 py-4 text-sm text-kp-text'
+                + ' text-center">Failed to load</div>';
+        });
+}
+
+function escapeHtml(text) {
+    var el = document.createElement('span');
+    el.textContent = text;
+    return el.innerHTML;
+}

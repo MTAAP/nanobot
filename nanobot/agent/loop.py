@@ -151,6 +151,7 @@ class AgentLoop:
         temperature: float = 0.7,
         tool_temperature: float = 0.0,
         timezone: str = "UTC",
+        notification_store: Any = None,
     ):
         from nanobot.config.schema import (
             CompactionConfig,
@@ -180,6 +181,7 @@ class AgentLoop:
         self.compaction_config = compaction_config or CompactionConfig()
         self.memory_config = memory_config or MemoryConfig()
         self.provider_resolver = provider_resolver
+        self.notification_store = notification_store
 
         # Tools-level workspace restriction (applies to file tools and exec)
         self.restrict_to_workspace = restrict_to_workspace or self.exec_config.restrict_to_workspace
@@ -410,6 +412,7 @@ class AgentLoop:
                     brave_api_key=self.brave_api_key,
                     provider=self.provider,
                     model=self.model,
+                    notification_store=self.notification_store,
                 )
             )
 
@@ -1162,6 +1165,15 @@ class AgentLoop:
                                 total_iterations=self.max_iterations,
                                 metadata=msg.metadata,
                             )
+                            # Set per-step progress callback on the tool
+                            tool._progress = lambda detail: self._emit_progress(
+                                msg.channel,
+                                msg.chat_id,
+                                ProgressKind.TOOL_START,
+                                tool_name=tool_call.name,
+                                detail=detail,
+                                metadata=msg.metadata,
+                            )
                             async with self._tracer.span(
                                 "tool_exec",
                                 attributes={"tool": tool_call.name},
@@ -1170,6 +1182,7 @@ class AgentLoop:
                                     tool_call.name,
                                     tool_call.arguments,
                                 )
+                            tool._progress = None
                             tool_status = (
                                 "error"
                                 if isinstance(result, str) and result.startswith("Error")

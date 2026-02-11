@@ -219,6 +219,11 @@ def gateway(
         registry = AgentRegistry(config.workspace_path)
         console.print("[green]>[/green] Agent registry enabled")
 
+    # Notification store for task/job alerts
+    from nanobot.web.notifications import NotificationStore
+
+    notification_store = NotificationStore(db_path=get_data_dir() / "notifications.db")
+
     # Create agent with channel manager and cron service
     agent = AgentLoop(
         bus=bus,
@@ -246,6 +251,7 @@ def gateway(
         temperature=config.agents.defaults.temperature,
         tool_temperature=config.agents.defaults.tool_temperature,
         timezone=config.agents.defaults.timezone,
+        notification_store=notification_store,
     )
 
     # Set the cron callback using agent's process_direct
@@ -254,12 +260,28 @@ def gateway(
         # Use delivery target as channel context so tools resolve correctly
         ch = job.payload.channel or "cron"
         cid = job.payload.to or job.id
-        response = await agent.process_direct(
-            job.payload.message,
-            session_key=f"cron:{job.id}",
-            channel=ch,
-            chat_id=cid,
+        try:
+            response = await agent.process_direct(
+                job.payload.message,
+                session_key=f"cron:{job.id}",
+                channel=ch,
+                chat_id=cid,
+            )
+        except Exception as e:
+            notification_store.add(
+                title=f"Job '{job.name}' failed",
+                body=str(e)[:200],
+                category="cron_error",
+                link="/tasks",
+            )
+            raise
+
+        notification_store.add(
+            title=f"Job '{job.name}' completed",
+            category="cron_ok",
+            link="/tasks",
         )
+
         # Deliver response to channel if requested
         if job.payload.deliver and job.payload.to and job.payload.channel:
             from nanobot.bus.events import OutboundMessage
@@ -415,6 +437,9 @@ def gateway(
             message_bus=bus,
             agent=agent,
             web_channel=web_channel,
+            cron_service=cron,
+            notification_store=notification_store,
+            timezone=config.agents.defaults.timezone,
         )
 
         web_host = marketing_cfg.web.host or "0.0.0.0"
