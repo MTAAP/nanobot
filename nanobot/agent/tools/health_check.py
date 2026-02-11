@@ -20,10 +20,7 @@ class HealthCheckTool(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "Check nanobot health status including error metrics "
-            "and recovery rates"
-        )
+        return "Check nanobot health status including error metrics and recovery rates"
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -32,10 +29,7 @@ class HealthCheckTool(Tool):
             "properties": {
                 "scope": {
                     "type": "string",
-                    "description": (
-                        "What to check: 'all', 'errors', "
-                        "'recent', or 'summary'"
-                    ),
+                    "description": ("What to check: 'all', 'errors', 'recent', or 'summary'"),
                     "enum": ["all", "errors", "recent", "summary"],
                     "default": "summary",
                 },
@@ -68,9 +62,7 @@ class HealthCheckTool(Tool):
         if scope == "summary":
             return self._format_summary(error_logger.get_metrics())
         elif scope == "errors":
-            return self._format_top_errors(
-                error_logger.get_top_errors(limit), limit
-            )
+            return self._format_top_errors(error_logger.get_top_errors(limit), limit)
         elif scope == "recent":
             return self._format_recent_errors(
                 error_logger.get_recent_errors(minutes), minutes, limit
@@ -94,9 +86,9 @@ class HealthCheckTool(Tool):
             status = "[CRITICAL] 20+ errors in last hour"
 
         recovery_rates = metrics.get("recovery_rates", {})
-        worst_recovery = min(
-            recovery_rates, key=recovery_rates.get, default=None
-        ) if recovery_rates else None
+        worst_recovery = (
+            min(recovery_rates, key=recovery_rates.get, default=None) if recovery_rates else None
+        )
         worst_value = recovery_rates.get(worst_recovery, 1.0) if worst_recovery else 1.0
 
         report = [
@@ -111,12 +103,14 @@ class HealthCheckTool(Tool):
         ]
 
         if worst_recovery and worst_value < 0.5:
-            report.extend([
-                "**Low Recovery Rate**",
-                f"Category '{worst_recovery}' only recovers "
-                f"{worst_value * 100:.0f}% of the time.",
-                "",
-            ])
+            report.extend(
+                [
+                    "**Low Recovery Rate**",
+                    f"Category '{worst_recovery}' only recovers "
+                    f"{worst_value * 100:.0f}% of the time.",
+                    "",
+                ]
+            )
 
         if errors_last_hour > 0:
             report.append("## Error Categories (Last Hour)")
@@ -127,18 +121,14 @@ class HealthCheckTool(Tool):
 
         return "\n".join(report)
 
-    def _format_top_errors(
-        self, top_errors: list[dict[str, Any]], limit: int
-    ) -> str:
+    def _format_top_errors(self, top_errors: list[dict[str, Any]], limit: int) -> str:
         report = ["# Top Error Categories", ""]
 
         if not top_errors:
             report.append("No errors recorded.")
             return "\n".join(report)
 
-        report.append(
-            f"Showing top {len(top_errors)} error categories:"
-        )
+        report.append(f"Showing top {len(top_errors)} error categories:")
         report.append("")
 
         for i, err in enumerate(top_errors, 1):
@@ -153,18 +143,17 @@ class HealthCheckTool(Tool):
             else:
                 tag = "[FAIL]"
 
-            report.append(
-                f"{i}. **{category}** "
-                f"({count} errors, {recovery:.0f}% recovery) {tag}"
-            )
+            report.append(f"{i}. **{category}** ({count} errors, {recovery:.0f}% recovery) {tag}")
 
-        report.extend([
-            "",
-            "Recovery rate: how often the system auto-recovers.",
-            "- [OK] >80%: Good automatic recovery",
-            "- [WARN] 50-80%: Partial recovery",
-            "- [FAIL] <50%: Needs investigation",
-        ])
+        report.extend(
+            [
+                "",
+                "Recovery rate: how often the system auto-recovers.",
+                "- [OK] >80%: Good automatic recovery",
+                "- [WARN] 50-80%: Partial recovery",
+                "- [FAIL] <50%: Needs investigation",
+            ]
+        )
 
         return "\n".join(report)
 
@@ -186,10 +175,7 @@ class HealthCheckTool(Tool):
 
         for i, err in enumerate(recent_errors[:limit], 1):
             timestamp = err.get("timestamp", 0)
-            ts = (
-                datetime.fromtimestamp(timestamp).strftime("%H:%M:%S")
-                if timestamp else "unknown"
-            )
+            ts = datetime.fromtimestamp(timestamp).strftime("%H:%M:%S") if timestamp else "unknown"
 
             category = err.get("category", "unknown")
             message = err.get("error_message", "")[:100]
@@ -210,19 +196,13 @@ class HealthCheckTool(Tool):
 
         return "\n".join(report)
 
-    def _format_full_report(
-        self, error_logger: ErrorLogger, limit: int, minutes: int
-    ) -> str:
+    def _format_full_report(self, error_logger: ErrorLogger, limit: int, minutes: int) -> str:
         sections = [
             self._format_summary(error_logger.get_metrics()),
             "",
-            self._format_top_errors(
-                error_logger.get_top_errors(limit), limit
-            ),
+            self._format_top_errors(error_logger.get_top_errors(limit), limit),
             "",
-            self._format_recent_errors(
-                error_logger.get_recent_errors(minutes), minutes, limit
-            ),
+            self._format_recent_errors(error_logger.get_recent_errors(minutes), minutes, limit),
         ]
         return "\n".join(sections)
 
@@ -241,7 +221,4 @@ def format_health_summary(metrics: dict[str, Any]) -> str:
     else:
         status = "CRITICAL"
 
-    return (
-        f"{status} | {errors_last_hour} errors/hour "
-        f"| {total_errors} total"
-    )
+    return f"{status} | {errors_last_hour} errors/hour | {total_errors} total"

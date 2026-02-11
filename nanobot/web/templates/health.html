@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Health - nanobot{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-kp-blue mb-6">System Health</h2>
+
+<!-- Status Banner -->
+<div class="mb-6 rounded-xl shadow-sm overflow-hidden
+    {% if status == 'HEALTHY' %}bg-emerald-50 border border-emerald-200
+    {% elif status == 'GOOD' %}bg-blue-50 border border-blue-200
+    {% elif status == 'WARNING' %}bg-amber-50 border border-amber-200
+    {% else %}bg-red-50 border border-red-200{% endif %}">
+    <div class="px-6 py-4 flex items-center gap-3">
+        <span class="text-2xl font-bold
+            {% if status == 'HEALTHY' %}text-emerald-700
+            {% elif status == 'GOOD' %}text-blue-700
+            {% elif status == 'WARNING' %}text-amber-700
+            {% else %}text-red-700{% endif %}">{{ status }}</span>
+        <span class="text-sm text-kp-text">
+            {{ metrics.get('total_errors', 0) }} total errors &middot;
+            {{ metrics.get('errors_last_hour', 0) }} in last hour
+        </span>
+    </div>
+</div>
+
+<!-- Summary Cards -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+    <div class="bg-white rounded-xl shadow-sm p-5">
+        <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">Total Errors</div>
+        <div class="text-3xl font-bold text-kp-dark" id="total-errors">{{ metrics.get('total_errors', 0) }}</div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5">
+        <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">Errors / Hour</div>
+        <div class="text-3xl font-bold text-kp-dark" id="errors-hour">{{ metrics.get('errors_last_hour', 0) }}</div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5">
+        <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">Categories</div>
+        <div class="text-3xl font-bold text-kp-dark">{{ metrics.get('errors_by_category', {})|length }}</div>
+    </div>
+</div>
+
+<!-- Top Error Categories -->
+{% if top_errors %}
+<h3 class="text-lg font-bold text-kp-blue mb-4">Top Error Categories</h3>
+<div class="bg-white rounded-xl shadow-sm overflow-hidden mb-8">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-kp-light border-b border-gray-100">
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Category</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Count</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Recovery Rate</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for err in top_errors %}
+            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200">
+                <td class="px-4 py-3 font-medium text-kp-dark">{{ err.category }}</td>
+                <td class="px-4 py-3 text-kp-text">{{ err.count }}</td>
+                <td class="px-4 py-3">
+                    <span class="{% if err.recovery_rate >= 0.8 %}text-emerald-600{% elif err.recovery_rate >= 0.5 %}text-amber-600{% else %}text-red-600{% endif %}">
+                        {{ (err.recovery_rate * 100)|round|int }}%
+                    </span>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<!-- Recent Errors -->
+<h3 class="text-lg font-bold text-kp-blue mb-4">Recent Errors (last hour)</h3>
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    {% if recent_errors %}
+    <ul class="divide-y divide-gray-100" id="recent-list">
+        {% for err in recent_errors %}
+        <li class="px-4 py-3 flex items-start gap-3">
+            {% if err.severity == 'critical' %}
+                <span class="badge-error">critical</span>
+            {% elif err.severity == 'error' %}
+                <span class="badge-error">error</span>
+            {% elif err.severity == 'warning' %}
+                <span class="badge-pending">warning</span>
+            {% else %}
+                <span class="badge-ok">info</span>
+            {% endif %}
+            <div class="flex-1 min-w-0">
+                <div class="text-sm text-kp-dark font-medium">{{ err.category }}</div>
+                <div class="text-xs text-kp-text truncate">{{ err.error_message }}</div>
+                {% if err.tool_name %}
+                <div class="text-xs text-kp-blue mt-0.5">Tool: {{ err.tool_name }}</div>
+                {% endif %}
+            </div>
+            {% if err.recovered %}
+            <span class="badge-ok">recovered</span>
+            {% endif %}
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="px-4 py-8 text-center text-kp-text">No recent errors.</div>
+    {% endif %}
+</div>
+
+<script>
+// Auto-refresh metrics every 30s
+setInterval(function() {
+    fetch('/health/api/metrics')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var el1 = document.getElementById('total-errors');
+            var el2 = document.getElementById('errors-hour');
+            if (el1) el1.textContent = data.total_errors || 0;
+            if (el2) el2.textContent = data.errors_last_hour || 0;
+        })
+        .catch(function() {});
+}, 30000);
+</script>
+{% endblock %}

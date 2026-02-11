@@ -86,22 +86,12 @@ class ChannelManager:
             except ImportError as e:
                 logger.warning(f"Discord channel not available: {e}")
 
-        # Email channel
-        if self.config.channels.email.enabled:
-            try:
-                from nanobot.channels.email import EmailChannel
-
-                self.channels["email"] = EmailChannel(self.config.channels.email, self.bus)
-                logger.info("Email channel enabled")
-            except ImportError as e:
-                logger.warning(f"Email channel not available: {e}")
-
         # Web channel (dashboard chat)
-        if self.config.marketing.web.enabled:
+        if self.config.web.enabled:
             try:
                 from nanobot.channels.web import WebChannel
 
-                self.channels["web"] = WebChannel(self.config.marketing.web, self.bus)
+                self.channels["web"] = WebChannel(self.config.web, self.bus)
                 logger.info("Web channel enabled")
             except ImportError as e:
                 logger.warning(f"Web channel not available: {e}")

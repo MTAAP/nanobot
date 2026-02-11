@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% block title %}Memory - nanobot{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-kp-blue mb-6">Memory Browser</h2>
+
+<!-- Stats Cards -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+    <div class="bg-white rounded-xl shadow-sm p-5">
+        <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">Vector Entries</div>
+        <div class="text-3xl font-bold text-kp-dark">{{ vector_count }}</div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5">
+        <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">DB Size</div>
+        <div class="text-3xl font-bold text-kp-dark">{{ db_size }}</div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5">
+        <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">Entities</div>
+        <div class="text-3xl font-bold text-kp-dark">{{ entity_count }}</div>
+    </div>
+    <div class="bg-white rounded-xl shadow-sm p-5">
+        <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">Relations</div>
+        <div class="text-3xl font-bold text-kp-dark">{{ relation_count }}</div>
+    </div>
+</div>
+
+<!-- Core Memory -->
+{% if core_sections %}
+<h3 class="text-lg font-bold text-kp-blue mb-4">Core Memory</h3>
+<div class="bg-white rounded-xl shadow-sm overflow-hidden mb-8">
+    {% for section in core_sections %}
+    <div class="border-b border-gray-100 last:border-b-0">
+        <div class="px-4 py-3">
+            <div class="text-sm font-semibold text-kp-dark mb-1">{{ section.name }}</div>
+            <div class="text-xs text-kp-text whitespace-pre-wrap">{{ section.content[:500] }}</div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Semantic Search -->
+<h3 class="text-lg font-bold text-kp-blue mb-4">Semantic Search</h3>
+<div class="bg-white rounded-xl shadow-sm p-4 mb-8">
+    <div class="flex gap-2 mb-4">
+        <input type="text" id="search-input" placeholder="Search memories..."
+               class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+        <button onclick="searchMemories()"
+                class="px-4 py-2 bg-kp-blue text-white text-sm font-medium rounded-lg hover:bg-[#004a7e] transition-colors duration-200">
+            Search
+        </button>
+    </div>
+    <div id="search-results"></div>
+</div>
+
+<!-- Entity Browser -->
+<h3 class="text-lg font-bold text-kp-blue mb-4">Entity Browser</h3>
+<div class="bg-white rounded-xl shadow-sm p-4">
+    <div class="flex gap-2 mb-4">
+        <input type="text" id="entity-input" placeholder="Search entities..."
+               class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-kp-dark focus:border-kp-blue focus:ring-1 focus:ring-kp-blue outline-none transition-colors duration-200">
+        <button onclick="searchEntities()"
+                class="px-4 py-2 bg-kp-blue text-white text-sm font-medium rounded-lg hover:bg-[#004a7e] transition-colors duration-200">
+            Search
+        </button>
+    </div>
+    <div id="entity-results"></div>
+</div>
+
+<script>
+function searchMemories() {
+    var query = document.getElementById('search-input').value.trim();
+    if (!query) return;
+    var el = document.getElementById('search-results');
+    el.innerHTML = '<div class="text-sm text-kp-text">Searching...</div>';
+
+    fetch('/memory/api/search?q=' + encodeURIComponent(query))
+        .then(function(r) { return r.json(); })
+        .then(function(results) {
+            if (!results || results.length === 0) {
+                el.innerHTML = '<div class="text-sm text-kp-text">No results found.</div>';
+                return;
+            }
+            var html = '<table class="w-full text-sm"><thead><tr class="border-b border-gray-100">'
+                + '<th class="text-left px-2 py-2 text-kp-blue font-semibold text-xs">Score</th>'
+                + '<th class="text-left px-2 py-2 text-kp-blue font-semibold text-xs">Type</th>'
+                + '<th class="text-left px-2 py-2 text-kp-blue font-semibold text-xs">Content</th>'
+                + '</tr></thead><tbody>';
+            results.forEach(function(r) {
+                html += '<tr class="border-b border-gray-100">'
+                    + '<td class="px-2 py-2 text-kp-text">' + r.similarity + '</td>'
+                    + '<td class="px-2 py-2"><span class="badge-pending">' + escapeH(r.type) + '</span></td>'
+                    + '<td class="px-2 py-2 text-kp-dark">' + escapeH(r.text) + '</td>'
+                    + '</tr>';
+            });
+            html += '</tbody></table>';
+            el.innerHTML = html;
+        })
+        .catch(function() {
+            el.innerHTML = '<div class="text-sm text-red-500">Search failed.</div>';
+        });
+}
+
+function searchEntities() {
+    var query = document.getElementById('entity-input').value.trim();
+    var url = '/memory/api/entities' + (query ? '?q=' + encodeURIComponent(query) : '');
+    var el = document.getElementById('entity-results');
+    el.innerHTML = '<div class="text-sm text-kp-text">Loading...</div>';
+
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(entities) {
+            if (!entities || entities.length === 0) {
+                el.innerHTML = '<div class="text-sm text-kp-text">No entities found.</div>';
+                return;
+            }
+            var html = '<table class="w-full text-sm"><thead><tr class="border-b border-gray-100">'
+                + '<th class="text-left px-2 py-2 text-kp-blue font-semibold text-xs">Name</th>'
+                + '<th class="text-left px-2 py-2 text-kp-blue font-semibold text-xs">Type</th>'
+                + '<th class="text-left px-2 py-2 text-kp-blue font-semibold text-xs">Updated</th>'
+                + '</tr></thead><tbody>';
+            entities.forEach(function(e) {
+                html += '<tr class="border-b border-gray-100">'
+                    + '<td class="px-2 py-2 font-medium text-kp-dark">' + escapeH(e.name) + '</td>'
+                    + '<td class="px-2 py-2"><span class="badge-pending">' + escapeH(e.type) + '</span></td>'
+                    + '<td class="px-2 py-2 text-kp-text text-xs">' + escapeH((e.updated_at || '').slice(0, 10)) + '</td>'
+                    + '</tr>';
+            });
+            html += '</tbody></table>';
+            el.innerHTML = html;
+        })
+        .catch(function() {
+            el.innerHTML = '<div class="text-sm text-red-500">Search failed.</div>';
+        });
+}
+
+function escapeH(text) {
+    var el = document.createElement('span');
+    el.textContent = text || '';
+    return el.innerHTML;
+}
+
+// Handle Enter key in search inputs
+document.getElementById('search-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') searchMemories();
+});
+document.getElementById('entity-input').addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') searchEntities();
+});
+
+// Load entities on page load
+searchEntities();
+</script>
+{% endblock %}

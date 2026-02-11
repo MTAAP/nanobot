@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}Logs - nanobot{% endblock %}
+{% block content %}
+<h2 class="text-2xl font-bold text-kp-blue mb-6">Log Viewer</h2>
+
+<!-- Filter Bar -->
+<div class="bg-white rounded-xl shadow-sm p-4 mb-6 flex flex-wrap gap-3 items-center">
+    <select id="filter-category" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-kp-dark focus:border-kp-blue outline-none">
+        <option value="">All Categories</option>
+        {% for cat in categories %}
+        <option value="{{ cat }}">{{ cat }}</option>
+        {% endfor %}
+    </select>
+    <select id="filter-severity" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-kp-dark focus:border-kp-blue outline-none">
+        <option value="">All Severities</option>
+        <option value="critical">Critical</option>
+        <option value="error">Error</option>
+        <option value="warning">Warning</option>
+        <option value="info">Info</option>
+    </select>
+    <select id="filter-minutes" class="rounded-lg border border-gray-300 px-3 py-2 text-sm text-kp-dark focus:border-kp-blue outline-none">
+        <option value="10">Last 10 min</option>
+        <option value="30">Last 30 min</option>
+        <option value="60" selected>Last hour</option>
+        <option value="360">Last 6 hours</option>
+        <option value="1440">Last 24 hours</option>
+    </select>
+    <button onclick="applyFilter()"
+            class="px-4 py-2 bg-kp-blue text-white text-sm font-medium rounded-lg hover:bg-[#004a7e] transition-colors duration-200">
+        Filter
+    </button>
+    <label class="ml-auto flex items-center gap-2 text-sm text-kp-text cursor-pointer">
+        <input type="checkbox" id="auto-refresh" checked class="rounded"> Auto-refresh
+    </label>
+</div>
+
+<!-- Log Table -->
+<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+    <table class="w-full text-sm">
+        <thead>
+            <tr class="bg-kp-light border-b border-gray-100">
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide w-20">Time</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide w-20">Severity</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide w-36">Category</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Message</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide w-28">Tool</th>
+            </tr>
+        </thead>
+        <tbody id="log-body">
+            {% for err in recent_errors %}
+            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200 log-row cursor-pointer"
+                onclick="toggleDetail(this)">
+                <td class="px-4 py-3 text-kp-text text-xs font-mono whitespace-nowrap">{{ err.get('time_str', '') }}</td>
+                <td class="px-4 py-3">
+                    {% if err.severity == 'critical' %}
+                        <span class="badge-error">critical</span>
+                    {% elif err.severity == 'error' %}
+                        <span class="badge-error">error</span>
+                    {% elif err.severity == 'warning' %}
+                        <span class="badge-pending">warning</span>
+                    {% else %}
+                        <span class="badge-ok">info</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-3 text-kp-dark font-medium">{{ err.category }}</td>
+                <td class="px-4 py-3 text-kp-text truncate max-w-md">{{ err.error_message }}</td>
+                <td class="px-4 py-3 text-kp-text text-xs">{{ err.tool_name or '&mdash;' }}</td>
+            </tr>
+            <tr class="hidden detail-row">
+                <td colspan="5" class="px-4 py-3 bg-gray-50">
+                    <div class="text-xs font-mono text-kp-text whitespace-pre-wrap">{{ err.get('context', '') or 'No additional context' }}</div>
+                </td>
+            </tr>
+            {% endfor %}
+            {% if not recent_errors %}
+            <tr><td colspan="5" class="px-4 py-8 text-center text-kp-text">No log entries.</td></tr>
+            {% endif %}
+        </tbody>
+    </table>
+</div>
+
+<script>
+var _refreshTimer = null;
+
+function toggleDetail(row) {
+    var detail = row.nextElementSibling;
+    if (detail && detail.classList.contains('detail-row')) {
+        detail.classList.toggle('hidden');
+    }
+}
+
+function applyFilter() {
+    var category = document.getElementById('filter-category').value;
+    var severity = document.getElementById('filter-severity').value;
+    var minutes = document.getElementById('filter-minutes').value;
+
+    var url = '/logs/api/filter?minutes=' + minutes;
+    if (category) url += '&category=' + encodeURIComponent(category);
+    if (severity) url += '&severity=' + encodeURIComponent(severity);
+
+    fetch(url)
+        .then(function(r) { return r.json(); })
+        .then(function(records) { renderLogs(records); })
+        .catch(function() {});
+}
+
+function renderLogs(records) {
+    var tbody = document.getElementById('log-body');
+    if (!records || records.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="px-4 py-8 text-center text-kp-text">No log entries.</td></tr>';
+        return;
+    }
+    var html = '';
+    records.forEach(function(r) {
+        var sevBadge = '';
+        if (r.severity === 'critical' || r.severity === 'error') {
+            sevBadge = '<span class="badge-error">' + esc(r.severity) + '</span>';
+        } else if (r.severity === 'warning') {
+            sevBadge = '<span class="badge-pending">warning</span>';
+        } else {
+            sevBadge = '<span class="badge-ok">info</span>';
+        }
+        html += '<tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200 log-row cursor-pointer" onclick="toggleDetail(this)">'
+            + '<td class="px-4 py-3 text-kp-text text-xs font-mono whitespace-nowrap">' + esc(r.time_str || '') + '</td>'
+            + '<td class="px-4 py-3">' + sevBadge + '</td>'
+            + '<td class="px-4 py-3 text-kp-dark font-medium">' + esc(r.category || '') + '</td>'
+            + '<td class="px-4 py-3 text-kp-text truncate max-w-md">' + esc(r.error_message || '') + '</td>'
+            + '<td class="px-4 py-3 text-kp-text text-xs">' + esc(r.tool_name || '\u2014') + '</td>'
+            + '</tr>'
+            + '<tr class="hidden detail-row"><td colspan="5" class="px-4 py-3 bg-gray-50">'
+            + '<div class="text-xs font-mono text-kp-text whitespace-pre-wrap">'
+            + esc(JSON.stringify(r.context || 'No additional context', null, 2))
+            + '</div></td></tr>';
+    });
+    tbody.innerHTML = html;
+}
+
+function refreshLogs() {
+    if (!document.getElementById('auto-refresh').checked) return;
+    fetch('/logs/api/stream')
+        .then(function(r) { return r.json(); })
+        .then(function(records) { renderLogs(records); })
+        .catch(function() {});
+}
+
+function esc(text) {
+    var el = document.createElement('span');
+    el.textContent = text || '';
+    return el.innerHTML;
+}
+
+// Start auto-refresh
+_refreshTimer = setInterval(refreshLogs, 5000);
+
+document.getElementById('auto-refresh').addEventListener('change', function() {
+    if (this.checked) {
+        _refreshTimer = setInterval(refreshLogs, 5000);
+    } else {
+        clearInterval(_refreshTimer);
+    }
+});
+</script>
+{% endblock %}

@@ -95,7 +95,7 @@ def create_auth_routes(templates: Jinja2Templates) -> APIRouter:
         auth: AuthManager = request.app.state.auth
         if auth.verify_credentials(username, password):
             token = auth.create_session(username)
-            response = RedirectResponse("/signals", status_code=303)
+            response = RedirectResponse("/chat", status_code=303)
             response.set_cookie(
                 AuthManager.COOKIE_NAME,
                 token,

@@ -1,33 +1,835 @@
 {% extends "base.html" %}
-{% block title %}Settings - K&amp;P Marketing{% endblock %}
+{% block title %}Settings - nanobot{% endblock %}
 {% block content %}
 <h2 class="text-2xl font-bold text-kp-blue mb-6">Settings</h2>
 
-<h3 class="text-lg font-semibold text-kp-dark mb-4">Consultants</h3>
+<!-- 1. Core Agent -->
+<div class="bg-white rounded-xl shadow-sm mb-4 max-w-3xl">
+    <button onclick="toggleSection('core')" class="w-full px-6 py-4 flex justify-between items-center text-left">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-bold text-kp-dark">Core Agent</h3>
+            <span class="badge-ok text-xs">Live</span>
+        </div>
+        <svg id="chevron-core" class="w-5 h-5 transition-transform rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+    <div id="body-core" class="px-6 pb-6 space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Model</label>
+                <input type="text" id="core-model" class="field-input" placeholder="e.g. anthropic/claude-sonnet-4-5-20250929">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Provider</label>
+                <select id="core-provider" class="field-input">
+                    <option value="">(auto-detect)</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Max Tokens</label>
+                <input type="number" id="core-maxTokens" class="field-input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Timezone</label>
+                <input type="text" id="core-timezone" class="field-input" placeholder="e.g. Europe/Berlin">
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Temperature</label>
+                <input type="number" id="core-temperature" class="field-input" step="0.1" min="0" max="2">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Tool Temperature</label>
+                <input type="number" id="core-toolTemperature" class="field-input" step="0.1" min="0" max="2">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Max Tool Iterations</label>
+                <input type="number" id="core-maxToolIterations" class="field-input" min="1">
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <button onclick="saveSection('core')" class="btn-save">Save</button>
+            <span id="status-core" class="text-sm"></span>
+        </div>
+    </div>
+</div>
 
-<div class="bg-white rounded-xl shadow-sm overflow-hidden">
+<!-- 2. Context Window -->
+<div class="bg-white rounded-xl shadow-sm mb-4 max-w-3xl">
+    <button onclick="toggleSection('context')" class="w-full px-6 py-4 flex justify-between items-center text-left">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-bold text-kp-dark">Context Window</h3>
+            <span class="badge-ok text-xs">Live</span>
+        </div>
+        <svg id="chevron-context" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+    <div id="body-context" class="hidden px-6 pb-6 space-y-4">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Max Context Tokens</label>
+                <input type="number" id="ctx-maxContextTokens" class="field-input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">System Prompt Budget</label>
+                <input type="number" id="ctx-systemPromptBudget" class="field-input">
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">History Budget</label>
+                <input type="number" id="ctx-historyBudget" class="field-input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Tool Result Budget</label>
+                <input type="number" id="ctx-toolResultBudget" class="field-input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Safety Margin</label>
+                <input type="number" id="ctx-safetyMargin" class="field-input">
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <button onclick="saveSection('context')" class="btn-save">Save</button>
+            <span id="status-context" class="text-sm"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 3. Compaction -->
+<div class="bg-white rounded-xl shadow-sm mb-4 max-w-3xl">
+    <button onclick="toggleSection('compaction')" class="w-full px-6 py-4 flex justify-between items-center text-left">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-bold text-kp-dark">Compaction</h3>
+            <span class="badge-ok text-xs">Live</span>
+        </div>
+        <svg id="chevron-compaction" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+    <div id="body-compaction" class="hidden px-6 pb-6 space-y-4">
+        <div class="flex items-center gap-2 mb-2">
+            <input type="checkbox" id="comp-enabled" class="rounded">
+            <label for="comp-enabled" class="text-sm font-medium text-kp-dark">Enabled</label>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Model</label>
+                <input type="text" id="comp-model" class="field-input" placeholder="(uses main model)">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Provider</label>
+                <select id="comp-provider" class="field-input">
+                    <option value="">(auto-detect)</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Threshold</label>
+                <input type="number" id="comp-threshold" class="field-input" step="0.05" min="0" max="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Keep Recent</label>
+                <input type="number" id="comp-keepRecent" class="field-input" min="0">
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <button onclick="saveSection('compaction')" class="btn-save">Save</button>
+            <span id="status-compaction" class="text-sm"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 4. Memory -->
+<div class="bg-white rounded-xl shadow-sm mb-4 max-w-3xl">
+    <button onclick="toggleSection('memory')" class="w-full px-6 py-4 flex justify-between items-center text-left">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-bold text-kp-dark">Memory</h3>
+            <span class="badge-ok text-xs">Live</span>
+        </div>
+        <svg id="chevron-memory" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+    <div id="body-memory" class="hidden px-6 pb-6 space-y-4">
+        <h4 class="text-sm font-semibold text-kp-blue uppercase tracking-wide">Models</h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Embedding Model</label>
+                <input type="text" id="mem-embeddingModel" class="field-input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Embedding Provider</label>
+                <select id="mem-embeddingProvider" class="field-input">
+                    <option value="">(auto-detect)</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Extraction Model</label>
+                <input type="text" id="mem-extractionModel" class="field-input" placeholder="(uses main model)">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Extraction Provider</label>
+                <select id="mem-extractionProvider" class="field-input">
+                    <option value="">(auto-detect)</option>
+                </select>
+            </div>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-kp-dark mb-1">Consolidation Provider</label>
+            <select id="mem-consolidationProvider" class="field-input max-w-sm">
+                <option value="">(auto-detect)</option>
+            </select>
+        </div>
+
+        <h4 class="text-sm font-semibold text-kp-blue uppercase tracking-wide pt-2">Search</h4>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Search Top K</label>
+                <input type="number" id="mem-searchTopK" class="field-input" min="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Min Similarity</label>
+                <input type="number" id="mem-minSimilarity" class="field-input" step="0.05" min="0" max="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Recency Weight</label>
+                <input type="number" id="mem-recencyWeight" class="field-input" step="0.001" min="0">
+            </div>
+        </div>
+
+        <h4 class="text-sm font-semibold text-kp-blue uppercase tracking-wide pt-2">Toggles</h4>
+        <div class="grid grid-cols-2 gap-x-6 gap-y-2">
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-enabled" class="rounded">
+                <label for="mem-enabled" class="text-sm text-kp-dark">Enabled</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-indexConversations" class="rounded">
+                <label for="mem-indexConversations" class="text-sm text-kp-dark">Index Conversations</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-extractFacts" class="rounded">
+                <label for="mem-extractFacts" class="text-sm text-kp-dark">Extract Facts</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-autoRecall" class="rounded">
+                <label for="mem-autoRecall" class="text-sm text-kp-dark">Auto Recall</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-enableCoreMemory" class="rounded">
+                <label for="mem-enableCoreMemory" class="text-sm text-kp-dark">Core Memory</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-enableEntities" class="rounded">
+                <label for="mem-enableEntities" class="text-sm text-kp-dark">Entities</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-enableConsolidation" class="rounded">
+                <label for="mem-enableConsolidation" class="text-sm text-kp-dark">Consolidation</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-enableProactive" class="rounded">
+                <label for="mem-enableProactive" class="text-sm text-kp-dark">Proactive</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="mem-deterministicRecall" class="rounded">
+                <label for="mem-deterministicRecall" class="text-sm text-kp-dark">Deterministic Recall</label>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 pt-2">
+            <button onclick="saveSection('memory')" class="btn-save">Save</button>
+            <span id="status-memory" class="text-sm"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 5. Memory Extraction -->
+<div class="bg-white rounded-xl shadow-sm mb-4 max-w-3xl">
+    <button onclick="toggleSection('extraction')" class="w-full px-6 py-4 flex justify-between items-center text-left">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-bold text-kp-dark">Memory Extraction</h3>
+            <span class="badge-ok text-xs">Live</span>
+        </div>
+        <svg id="chevron-extraction" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+    <div id="body-extraction" class="hidden px-6 pb-6 space-y-4">
+        <div class="flex items-center gap-2 mb-2">
+            <input type="checkbox" id="ext-enabled" class="rounded">
+            <label for="ext-enabled" class="text-sm font-medium text-kp-dark">Enabled</label>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Extraction Model</label>
+                <input type="text" id="ext-extractionModel" class="field-input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Embedding Model</label>
+                <input type="text" id="ext-embeddingModel" class="field-input">
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Extraction Interval</label>
+                <input type="number" id="ext-extractionInterval" class="field-input" min="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Max Facts / Extraction</label>
+                <input type="number" id="ext-maxFactsPerExtraction" class="field-input" min="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Max Lessons / Extraction</label>
+                <input type="number" id="ext-maxLessonsPerExtraction" class="field-input" min="1">
+            </div>
+        </div>
+        <div>
+            <label class="block text-sm font-medium text-kp-dark mb-1">Candidate Threshold</label>
+            <input type="number" id="ext-candidateThreshold" class="field-input max-w-sm" step="0.05" min="0" max="1">
+        </div>
+        <div class="grid grid-cols-2 gap-x-6 gap-y-2">
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="ext-enablePreCompactionFlush" class="rounded">
+                <label for="ext-enablePreCompactionFlush" class="text-sm text-kp-dark">Pre-Compaction Flush</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="ext-enableToolLessons" class="rounded">
+                <label for="ext-enableToolLessons" class="text-sm text-kp-dark">Tool Lessons</label>
+            </div>
+        </div>
+        <div class="flex items-center gap-3 pt-2">
+            <button onclick="saveSection('extraction')" class="btn-save">Save</button>
+            <span id="status-extraction" class="text-sm"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 6. Daemon -->
+<div class="bg-white rounded-xl shadow-sm mb-4 max-w-3xl">
+    <button onclick="toggleSection('daemon')" class="w-full px-6 py-4 flex justify-between items-center text-left">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-bold text-kp-dark">Daemon</h3>
+            <span class="badge-pending text-xs">Restart</span>
+        </div>
+        <svg id="chevron-daemon" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+    <div id="body-daemon" class="hidden px-6 pb-6 space-y-4">
+        <div class="flex items-center gap-2 mb-2">
+            <input type="checkbox" id="dmn-enabled" class="rounded">
+            <label for="dmn-enabled" class="text-sm font-medium text-kp-dark">Enabled</label>
+        </div>
+
+        <h4 class="text-sm font-semibold text-kp-blue uppercase tracking-wide">Base</h4>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Triage Model</label>
+                <input type="text" id="dmn-triageModel" class="field-input" placeholder="(uses main model)">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Triage Provider</label>
+                <select id="dmn-triageProvider" class="field-input">
+                    <option value="">(auto-detect)</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Execution Model</label>
+                <input type="text" id="dmn-executionModel" class="field-input" placeholder="(uses main model)">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Execution Provider</label>
+                <select id="dmn-executionProvider" class="field-input">
+                    <option value="">(auto-detect)</option>
+                </select>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Interval (s)</label>
+                <input type="number" id="dmn-interval" class="field-input" min="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Max Iterations</label>
+                <input type="number" id="dmn-maxIterations" class="field-input" min="1">
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Cooldown After Action (s)</label>
+                <input type="number" id="dmn-cooldownAfterAction" class="field-input" min="0">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Cooldown High (s)</label>
+                <input type="number" id="dmn-cooldownHigh" class="field-input" min="0">
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Cooldown Medium (s)</label>
+                <input type="number" id="dmn-cooldownMedium" class="field-input" min="0">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Cooldown Low (s)</label>
+                <input type="number" id="dmn-cooldownLow" class="field-input" min="0">
+            </div>
+        </div>
+
+        <h4 class="text-sm font-semibold text-kp-blue uppercase tracking-wide pt-2">Registry</h4>
+        <div class="flex items-center gap-2 mb-2">
+            <input type="checkbox" id="dmn-reg-enabled" class="rounded">
+            <label for="dmn-reg-enabled" class="text-sm font-medium text-kp-dark">Registry Enabled</label>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Pulse Interval (s)</label>
+                <input type="number" id="dmn-reg-pulseInterval" class="field-input" min="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Stale Threshold (s)</label>
+                <input type="number" id="dmn-reg-staleThreshold" class="field-input" min="1">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Monitor Interval (s)</label>
+                <input type="number" id="dmn-reg-monitorInterval" class="field-input" min="1">
+            </div>
+        </div>
+
+        <h4 class="text-sm font-semibold text-kp-blue uppercase tracking-wide pt-2">Self-Evolve</h4>
+        <div class="flex items-center gap-2 mb-2">
+            <input type="checkbox" id="dmn-evo-enabled" class="rounded">
+            <label for="dmn-evo-enabled" class="text-sm font-medium text-kp-dark">Self-Evolve Enabled</label>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Repo URL</label>
+                <input type="text" id="dmn-evo-repoUrl" class="field-input">
+            </div>
+            <div class="flex items-center gap-2 pt-6">
+                <input type="checkbox" id="dmn-evo-autoMerge" class="rounded">
+                <label for="dmn-evo-autoMerge" class="text-sm text-kp-dark">Auto Merge</label>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Test Command</label>
+                <input type="text" id="dmn-evo-testCommand" class="field-input">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Lint Command</label>
+                <input type="text" id="dmn-evo-lintCommand" class="field-input">
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 pt-2">
+            <button onclick="saveSection('daemon')" class="btn-save">Save</button>
+            <span id="status-daemon" class="text-sm"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 7. Intent -->
+<div class="bg-white rounded-xl shadow-sm mb-4 max-w-3xl">
+    <button onclick="toggleSection('intent')" class="w-full px-6 py-4 flex justify-between items-center text-left">
+        <div class="flex items-center gap-2">
+            <h3 class="text-lg font-bold text-kp-dark">Intent Classification</h3>
+            <span class="badge-ok text-xs">Live</span>
+        </div>
+        <svg id="chevron-intent" class="w-5 h-5 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+    </button>
+    <div id="body-intent" class="hidden px-6 pb-6 space-y-4">
+        <div class="grid grid-cols-2 gap-x-6 gap-y-2 mb-2">
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="int-enabled" class="rounded">
+                <label for="int-enabled" class="text-sm font-medium text-kp-dark">Enabled</label>
+            </div>
+            <div class="flex items-center gap-2">
+                <input type="checkbox" id="int-llmFallback" class="rounded">
+                <label for="int-llmFallback" class="text-sm text-kp-dark">LLM Fallback</label>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Classifier Model</label>
+                <input type="text" id="int-classifierModel" class="field-input" placeholder="(uses main model)">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-kp-dark mb-1">Classifier Provider</label>
+                <select id="int-classifierProvider" class="field-input">
+                    <option value="">(auto-detect)</option>
+                </select>
+            </div>
+        </div>
+        <div class="flex items-center gap-3">
+            <button onclick="saveSection('intent')" class="btn-save">Save</button>
+            <span id="status-intent" class="text-sm"></span>
+        </div>
+    </div>
+</div>
+
+<!-- 8. Configured Providers (table) -->
+<div class="bg-white rounded-xl shadow-sm overflow-hidden max-w-3xl">
+    <h3 class="text-lg font-bold text-kp-dark px-6 pt-5 pb-3">Configured Providers</h3>
     <table class="w-full text-sm">
         <thead>
             <tr class="bg-kp-light border-b border-gray-100">
-                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Name</th>
-                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Specializations</th>
-                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Industries</th>
-                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Regions</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Provider</th>
+                <th class="text-left px-4 py-3 text-kp-blue font-semibold text-xs uppercase tracking-wide">Status</th>
             </tr>
         </thead>
         <tbody>
-            {% for c in consultants %}
-            <tr class="border-b border-gray-100 hover:bg-gray-50 transition-colors duration-200">
-                <td class="px-4 py-3 font-semibold text-kp-dark">{{ c.name }}</td>
-                <td class="px-4 py-3 text-kp-text">{{ c.specializations | join(", ") if c.specializations else "-" }}</td>
-                <td class="px-4 py-3 text-kp-text">{{ c.industries | join(", ") if c.industries else "-" }}</td>
-                <td class="px-4 py-3 text-kp-text">{{ c.regions | join(", ") if c.regions else "-" }}</td>
+            {% for p in providers %}
+            <tr class="border-b border-gray-100">
+                <td class="px-4 py-3 font-medium text-kp-dark">{{ p.name }}</td>
+                <td class="px-4 py-3">
+                    {% if p.configured %}
+                        <span class="badge-ok">configured</span>
+                    {% else %}
+                        <span class="badge-pending">not set</span>
+                    {% endif %}
+                </td>
             </tr>
             {% endfor %}
-            {% if not consultants %}
-            <tr><td colspan="4" class="px-4 py-8 text-center text-kp-text">No consultants configured.</td></tr>
-            {% endif %}
         </tbody>
     </table>
 </div>
+
+<style>
+.field-input {
+    width: 100%;
+    border-radius: 0.5rem;
+    border: 1px solid #d1d5db;
+    padding: 0.5rem 0.75rem;
+    color: #213448;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.field-input:focus {
+    border-color: #005c9d;
+    box-shadow: 0 0 0 1px #005c9d;
+}
+.btn-save {
+    background-color: #005c9d;
+    color: white;
+    font-weight: 600;
+    border-radius: 0.75rem;
+    padding: 0.5rem 1.25rem;
+    transition: background-color 0.2s;
+}
+.btn-save:hover {
+    background-color: #004a7e;
+}
+</style>
+
+<script>
+var CFG = {};       // populated by loadConfig
+var PROVIDERS = []; // configured provider names
+
+// -- Helpers --
+function getVal(id) { var el = document.getElementById(id); return el ? el.value.trim() : ''; }
+function getInt(id) { var v = parseInt(getVal(id), 10); return isNaN(v) ? undefined : v; }
+function getFloat(id) { var v = parseFloat(getVal(id)); return isNaN(v) ? undefined : v; }
+function getCheck(id) { var el = document.getElementById(id); return el ? el.checked : false; }
+function setVal(id, v) { var el = document.getElementById(id); if (el) el.value = (v === null || v === undefined) ? '' : v; }
+function setCheck(id, v) { var el = document.getElementById(id); if (el) el.checked = !!v; }
+
+function setSelect(id, v) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    // Ensure option exists
+    var found = false;
+    for (var i = 0; i < el.options.length; i++) {
+        if (el.options[i].value === (v || '')) { found = true; break; }
+    }
+    if (!found && v) {
+        var opt = document.createElement('option');
+        opt.value = v;
+        opt.textContent = v;
+        el.appendChild(opt);
+    }
+    el.value = v || '';
+}
+
+function populateProviderSelects() {
+    var selects = [
+        'core-provider', 'comp-provider',
+        'mem-embeddingProvider', 'mem-extractionProvider', 'mem-consolidationProvider',
+        'dmn-triageProvider', 'dmn-executionProvider',
+        'int-classifierProvider'
+    ];
+    selects.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        // Keep first (auto-detect) option, remove the rest
+        while (el.options.length > 1) el.remove(1);
+        PROVIDERS.forEach(function(p) {
+            var opt = document.createElement('option');
+            opt.value = p;
+            opt.textContent = p;
+            el.appendChild(opt);
+        });
+    });
+}
+
+// -- Toggle --
+function toggleSection(name) {
+    var body = document.getElementById('body-' + name);
+    var chev = document.getElementById('chevron-' + name);
+    if (!body) return;
+    body.classList.toggle('hidden');
+    if (chev) chev.classList.toggle('rotate-180');
+}
+
+// -- Load --
+function loadConfig() {
+    fetch('/settings/api/config')
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        CFG = data.defaults || {};
+        PROVIDERS = data.providers || [];
+        populateProviderSelects();
+        populateFields();
+    });
+}
+
+function populateFields() {
+    var d = CFG;
+    // Core
+    setVal('core-model', d.model);
+    setSelect('core-provider', d.provider);
+    setVal('core-maxTokens', d.maxTokens);
+    setVal('core-temperature', d.temperature);
+    setVal('core-toolTemperature', d.toolTemperature);
+    setVal('core-maxToolIterations', d.maxToolIterations);
+    setVal('core-timezone', d.timezone);
+
+    // Context
+    var ctx = d.context || {};
+    setVal('ctx-maxContextTokens', ctx.maxContextTokens);
+    setVal('ctx-systemPromptBudget', ctx.systemPromptBudget);
+    setVal('ctx-historyBudget', ctx.historyBudget);
+    setVal('ctx-toolResultBudget', ctx.toolResultBudget);
+    setVal('ctx-safetyMargin', ctx.safetyMargin);
+
+    // Compaction
+    var comp = d.compaction || {};
+    setCheck('comp-enabled', comp.enabled);
+    setVal('comp-model', comp.model);
+    setSelect('comp-provider', comp.provider);
+    setVal('comp-threshold', comp.threshold);
+    setVal('comp-keepRecent', comp.keepRecent);
+
+    // Memory
+    var mem = d.memory || {};
+    setVal('mem-embeddingModel', mem.embeddingModel);
+    setSelect('mem-embeddingProvider', mem.embeddingProvider);
+    setVal('mem-extractionModel', mem.extractionModel);
+    setSelect('mem-extractionProvider', mem.extractionProvider);
+    setSelect('mem-consolidationProvider', mem.consolidationProvider);
+    setVal('mem-searchTopK', mem.searchTopK);
+    setVal('mem-minSimilarity', mem.minSimilarity);
+    setVal('mem-recencyWeight', mem.recencyWeight);
+    setCheck('mem-enabled', mem.enabled);
+    setCheck('mem-indexConversations', mem.indexConversations);
+    setCheck('mem-extractFacts', mem.extractFacts);
+    setCheck('mem-autoRecall', mem.autoRecall);
+    setCheck('mem-enableCoreMemory', mem.enableCoreMemory);
+    setCheck('mem-enableEntities', mem.enableEntities);
+    setCheck('mem-enableConsolidation', mem.enableConsolidation);
+    setCheck('mem-enableProactive', mem.enableProactive);
+    setCheck('mem-deterministicRecall', mem.deterministicRecall);
+
+    // Memory Extraction
+    var ext = d.memoryExtraction || {};
+    setCheck('ext-enabled', ext.enabled);
+    setVal('ext-extractionModel', ext.extractionModel);
+    setVal('ext-embeddingModel', ext.embeddingModel);
+    setVal('ext-extractionInterval', ext.extractionInterval);
+    setVal('ext-maxFactsPerExtraction', ext.maxFactsPerExtraction);
+    setVal('ext-maxLessonsPerExtraction', ext.maxLessonsPerExtraction);
+    setVal('ext-candidateThreshold', ext.candidateThreshold);
+    setCheck('ext-enablePreCompactionFlush', ext.enablePreCompactionFlush);
+    setCheck('ext-enableToolLessons', ext.enableToolLessons);
+
+    // Daemon
+    var dmn = d.daemon || {};
+    setCheck('dmn-enabled', dmn.enabled);
+    setVal('dmn-triageModel', dmn.triageModel);
+    setSelect('dmn-triageProvider', dmn.triageProvider);
+    setVal('dmn-executionModel', dmn.executionModel);
+    setSelect('dmn-executionProvider', dmn.executionProvider);
+    setVal('dmn-interval', dmn.interval);
+    setVal('dmn-maxIterations', dmn.maxIterations);
+    setVal('dmn-cooldownAfterAction', dmn.cooldownAfterAction);
+    setVal('dmn-cooldownHigh', dmn.cooldownHigh);
+    setVal('dmn-cooldownMedium', dmn.cooldownMedium);
+    setVal('dmn-cooldownLow', dmn.cooldownLow);
+    // Registry
+    var reg = dmn.registry || {};
+    setCheck('dmn-reg-enabled', reg.enabled);
+    setVal('dmn-reg-pulseInterval', reg.pulseInterval);
+    setVal('dmn-reg-staleThreshold', reg.staleThreshold);
+    setVal('dmn-reg-monitorInterval', reg.monitorInterval);
+    // Self-evolve
+    var evo = dmn.selfEvolve || {};
+    setCheck('dmn-evo-enabled', evo.enabled);
+    setVal('dmn-evo-repoUrl', evo.repoUrl);
+    setCheck('dmn-evo-autoMerge', evo.autoMerge);
+    setVal('dmn-evo-testCommand', evo.testCommand);
+    setVal('dmn-evo-lintCommand', evo.lintCommand);
+
+    // Intent
+    var intent = d.intent || {};
+    setCheck('int-enabled', intent.enabled);
+    setCheck('int-llmFallback', intent.llmFallback);
+    setVal('int-classifierModel', intent.classifierModel);
+    setSelect('int-classifierProvider', intent.classifierProvider);
+}
+
+// -- Gather --
+function gatherSectionData(name) {
+    switch (name) {
+    case 'core':
+        return {
+            model: getVal('core-model'),
+            provider: getVal('core-provider') || null,
+            maxTokens: getInt('core-maxTokens'),
+            temperature: getFloat('core-temperature'),
+            toolTemperature: getFloat('core-toolTemperature'),
+            maxToolIterations: getInt('core-maxToolIterations'),
+            timezone: getVal('core-timezone')
+        };
+    case 'context':
+        return {
+            maxContextTokens: getInt('ctx-maxContextTokens'),
+            systemPromptBudget: getInt('ctx-systemPromptBudget'),
+            historyBudget: getInt('ctx-historyBudget'),
+            toolResultBudget: getInt('ctx-toolResultBudget'),
+            safetyMargin: getInt('ctx-safetyMargin')
+        };
+    case 'compaction':
+        return {
+            enabled: getCheck('comp-enabled'),
+            model: getVal('comp-model') || null,
+            provider: getVal('comp-provider') || null,
+            threshold: getFloat('comp-threshold'),
+            keepRecent: getInt('comp-keepRecent')
+        };
+    case 'memory':
+        return {
+            enabled: getCheck('mem-enabled'),
+            embeddingModel: getVal('mem-embeddingModel'),
+            embeddingProvider: getVal('mem-embeddingProvider') || null,
+            extractionModel: getVal('mem-extractionModel') || null,
+            extractionProvider: getVal('mem-extractionProvider') || null,
+            consolidationProvider: getVal('mem-consolidationProvider') || null,
+            indexConversations: getCheck('mem-indexConversations'),
+            extractFacts: getCheck('mem-extractFacts'),
+            autoRecall: getCheck('mem-autoRecall'),
+            searchTopK: getInt('mem-searchTopK'),
+            minSimilarity: getFloat('mem-minSimilarity'),
+            recencyWeight: getFloat('mem-recencyWeight'),
+            enableCoreMemory: getCheck('mem-enableCoreMemory'),
+            enableEntities: getCheck('mem-enableEntities'),
+            enableConsolidation: getCheck('mem-enableConsolidation'),
+            enableProactive: getCheck('mem-enableProactive'),
+            deterministicRecall: getCheck('mem-deterministicRecall')
+        };
+    case 'extraction':
+        return {
+            enabled: getCheck('ext-enabled'),
+            extractionModel: getVal('ext-extractionModel'),
+            embeddingModel: getVal('ext-embeddingModel'),
+            extractionInterval: getInt('ext-extractionInterval'),
+            maxFactsPerExtraction: getInt('ext-maxFactsPerExtraction'),
+            maxLessonsPerExtraction: getInt('ext-maxLessonsPerExtraction'),
+            candidateThreshold: getFloat('ext-candidateThreshold'),
+            enablePreCompactionFlush: getCheck('ext-enablePreCompactionFlush'),
+            enableToolLessons: getCheck('ext-enableToolLessons')
+        };
+    case 'daemon':
+        return {
+            enabled: getCheck('dmn-enabled'),
+            interval: getInt('dmn-interval'),
+            triageModel: getVal('dmn-triageModel') || null,
+            triageProvider: getVal('dmn-triageProvider') || null,
+            executionModel: getVal('dmn-executionModel') || null,
+            executionProvider: getVal('dmn-executionProvider') || null,
+            maxIterations: getInt('dmn-maxIterations'),
+            cooldownAfterAction: getInt('dmn-cooldownAfterAction'),
+            cooldownHigh: getInt('dmn-cooldownHigh'),
+            cooldownMedium: getInt('dmn-cooldownMedium'),
+            cooldownLow: getInt('dmn-cooldownLow'),
+            registry: {
+                enabled: getCheck('dmn-reg-enabled'),
+                pulseInterval: getInt('dmn-reg-pulseInterval'),
+                staleThreshold: getInt('dmn-reg-staleThreshold'),
+                monitorInterval: getInt('dmn-reg-monitorInterval')
+            },
+            selfEvolve: {
+                enabled: getCheck('dmn-evo-enabled'),
+                repoUrl: getVal('dmn-evo-repoUrl'),
+                autoMerge: getCheck('dmn-evo-autoMerge'),
+                testCommand: getVal('dmn-evo-testCommand'),
+                lintCommand: getVal('dmn-evo-lintCommand')
+            }
+        };
+    case 'intent':
+        return {
+            enabled: getCheck('int-enabled'),
+            llmFallback: getCheck('int-llmFallback'),
+            classifierModel: getVal('int-classifierModel') || null,
+            classifierProvider: getVal('int-classifierProvider') || null
+        };
+    }
+    return {};
+}
+
+// -- API path map --
+var API_PATHS = {
+    core: '/settings/api/core',
+    context: '/settings/api/context',
+    compaction: '/settings/api/compaction',
+    memory: '/settings/api/memory',
+    extraction: '/settings/api/memory-extraction',
+    daemon: '/settings/api/daemon',
+    intent: '/settings/api/intent'
+};
+
+// -- Save --
+function saveSection(name) {
+    var statusEl = document.getElementById('status-' + name);
+    var payload = gatherSectionData(name);
+    var url = API_PATHS[name];
+    if (!url) return;
+
+    statusEl.textContent = 'Saving...';
+    statusEl.className = 'text-sm text-kp-text';
+
+    fetch(url, {
+        method: 'PATCH',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.ok) {
+            var msg = 'Saved';
+            if (data.restart_required) msg += ' (restart required)';
+            statusEl.textContent = msg;
+            statusEl.className = 'text-sm text-emerald-600';
+        } else {
+            statusEl.textContent = 'Error: ' + (data.error || 'unknown');
+            statusEl.className = 'text-sm text-red-500';
+        }
+    })
+    .catch(function() {
+        statusEl.textContent = 'Request failed';
+        statusEl.className = 'text-sm text-red-500';
+    });
+}
+
+// -- Init --
+document.addEventListener('DOMContentLoaded', loadConfig);
+</script>
 {% endblock %}

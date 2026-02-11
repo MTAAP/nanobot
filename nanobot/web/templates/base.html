@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="de">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{% block title %}K&amp;P Marketing Assistant{% endblock %}</title>
+    <title>{% block title %}nanobot{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
     tailwind.config = {
@@ -34,15 +34,13 @@
 <body class="font-poppins text-kp-dark bg-kp-light min-h-screen flex flex-col">
     <nav class="sticky top-0 z-50 bg-white border-b border-gray-100 shadow-sm">
         <div class="max-w-7xl mx-auto px-6 flex items-center justify-between h-16">
-            <a href="/signals" class="text-kp-blue font-bold text-xl tracking-tight">K&amp;P Marketing</a>
+            <a href="/chat" class="text-kp-blue font-bold text-xl tracking-tight">nanobot</a>
             <div class="flex items-center gap-5 text-sm font-medium">
-                <a href="/signals" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Signals</a>
-                <a href="/leads" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Leads</a>
-                <a href="/recommendations" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Recommendations</a>
-                <a href="/intelligence" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Intelligence</a>
-                <a href="/reports" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Reports</a>
+                <a href="/chat" onclick="openChat()" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Chat</a>
                 <a href="/tasks" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Tasks</a>
-                <a href="javascript:void(0)" onclick="openChat()" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Chat</a>
+                <a href="/health" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Health</a>
+                <a href="/memory" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Memory</a>
+                <a href="/logs" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Logs</a>
                 <a href="/settings" class="text-kp-dark hover:text-kp-blue transition-colors duration-200">Settings</a>
                 <div class="relative" id="notif-wrapper">
                     <button onclick="toggleNotifications()" class="relative text-kp-dark hover:text-kp-blue transition-colors duration-200">
@@ -73,7 +71,7 @@
         </div>
     </aside>
     <footer class="bg-kp-blue text-white text-center py-6 mt-auto">
-        <small class="text-white/80">K&amp;P Marketing Assistant &mdash; Powered by Nanobot</small>
+        <small class="text-white/80">nanobot &mdash; Personal AI Assistant</small>
     </footer>
     <script src="/static/chat.js"></script>
 </body>

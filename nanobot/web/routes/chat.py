@@ -1,7 +1,6 @@
 """Chat route with WebSocket endpoint for agent communication."""
 
 import json
-from typing import Any
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -137,22 +136,6 @@ async def chat_ws(websocket: WebSocket, session_id: str):
     web_channel.register(session_id, websocket)
 
     try:
-        # If context query params present, send auto-context message
-        context = websocket.query_params.get("context")
-        context_id = websocket.query_params.get("id")
-        if context and context_id:
-            store = websocket.app.state.intel_store
-            prompt = _build_context_prompt(store, context, context_id)
-            if prompt:
-                await bus.publish_inbound(
-                    InboundMessage(
-                        channel="web",
-                        sender_id="admin",
-                        chat_id=session_id,
-                        content=prompt,
-                    )
-                )
-
         # Listen for user messages
         while True:
             data = await websocket.receive_json()
@@ -171,57 +154,3 @@ async def chat_ws(websocket: WebSocket, session_id: str):
         pass
     finally:
         web_channel.unregister(session_id)
-
-
-def _build_context_prompt(
-    store: Any,
-    context_type: str,
-    context_id: str,
-) -> str:
-    """Build a context-aware prompt for the agent based on what the user clicked."""
-    if not store:
-        return ""
-
-    try:
-        cid = int(context_id)
-    except (ValueError, TypeError):
-        return ""
-
-    if context_type == "signal":
-        signal = store.get_signal(cid)
-        if not signal:
-            return ""
-        return (
-            f"The user wants to discuss signal #{signal['id']}: "
-            f"{signal['company_name']} - {signal['signal_type']} - "
-            f"{signal['title']}. "
-            f"Description: {signal.get('description', 'N/A')}. "
-            f"Relevance: {signal.get('relevance_score', 0):.0%}. "
-            f"Analyze this consulting opportunity for K&P. "
-            f"What's our best approach? Consider using scan_company "
-            f"and lead_scoring tools."
-        )
-
-    if context_type == "lead":
-        # Leads are grouped by company name, not by ID
-        # The context_id here is actually company_name passed as string
-        return (
-            "The user wants to discuss lead opportunities for a company. "
-            "Review all signals for this company, score the lead, "
-            "suggest K&P services that fit, and develop an approach strategy. "
-            "Use the lead_scoring and market_intelligence tools."
-        )
-
-    if context_type == "recommendation":
-        rec = store.get_recommendation(cid)
-        if not rec:
-            return ""
-        return (
-            f"The user wants to refine recommendation #{rec['id']} for "
-            f"{rec['company_name']}. Service area: {rec.get('service_area', 'N/A')}. "
-            f"Consultant: {rec.get('consultant_name', 'unassigned')}. "
-            f"Review the outreach plan, suggest talking points, and help "
-            f"draft the email. Use market_report render_outreach if needed."
-        )
-
-    return ""
