@@ -109,4 +109,7 @@ class ReportGenerator:
 
     def list_templates(self) -> list[str]:
         """List available template names."""
-        return [p.name for p in self._template_dir.iterdir() if p.suffix == ".md" and p.is_file()]
+        return [
+            p.name for p in self._template_dir.iterdir()
+            if p.suffix == ".md" and p.is_file()
+        ]

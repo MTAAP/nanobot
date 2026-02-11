@@ -2,7 +2,7 @@
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -263,7 +263,9 @@ class IntelStore:
     # --- Single record fetches ---
 
     def get_recommendation(self, rec_id: int) -> dict[str, Any] | None:
-        row = self._conn.execute("SELECT * FROM recommendations WHERE id = ?", (rec_id,)).fetchone()
+        row = self._conn.execute(
+            "SELECT * FROM recommendations WHERE id = ?", (rec_id,)
+        ).fetchone()
         return self._row_to_dict(row) if row else None
 
     # --- Outreach Tracking ---
@@ -312,10 +314,6 @@ class IntelStore:
                     days_elapsed = (datetime.utcnow() - sent_dt).days
                     if days_elapsed <= 3:
                         heat = "hot"
-                    elif days_elapsed <= 7:
-                        heat = "warm"
-                    else:
-                        heat = "warm"  # Responded after being cold -> warm
                 except (ValueError, TypeError):
                     pass
             self._conn.execute(
@@ -352,8 +350,6 @@ class IntelStore:
 
     def update_stale_outreach(self) -> int:
         """Mark outreach with no response after 7 days as cold."""
-        from datetime import timedelta
-
         cutoff = (datetime.utcnow() - timedelta(days=7)).isoformat()
         now = datetime.utcnow().isoformat()
         cursor = self._conn.execute(
@@ -365,6 +361,19 @@ class IntelStore:
         )
         self._conn.commit()
         return cursor.rowcount
+
+    def mark_no_response(self, recommendation_id: int) -> bool:
+        """Mark an outreach as no-response and set heat to cold."""
+        now = datetime.utcnow().isoformat()
+        cursor = self._conn.execute(
+            """UPDATE outreach_tracking
+            SET response_status = 'no_response', heat_status = 'cold',
+                updated_at = ?
+            WHERE recommendation_id = ?""",
+            (now, recommendation_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
 
     # --- Consultants ---
 

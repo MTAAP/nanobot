@@ -59,7 +59,7 @@ async def list_sessions(request: Request) -> JSONResponse:
                         message_count += 1
                         if not preview and data.get("role") == "user":
                             preview = (data.get("content") or "")[:120]
-            except Exception:
+            except (OSError, json.JSONDecodeError):
                 continue
 
         if message_count == 0:

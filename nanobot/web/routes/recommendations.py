@@ -1,7 +1,5 @@
 """Recommendations approval route."""
 
-from datetime import datetime
-
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
@@ -174,16 +172,6 @@ async def no_response(request: Request, rec_id: int):
 
     store = request.app.state.intel_store
     if store:
-        tracking = store.get_outreach_tracking(rec_id)
-        if tracking:
-            now = datetime.utcnow().isoformat()
-            store._conn.execute(
-                """UPDATE outreach_tracking
-                SET response_status = 'no_response', heat_status = 'cold',
-                    updated_at = ?
-                WHERE recommendation_id = ?""",
-                (now, rec_id),
-            )
-            store._conn.commit()
+        store.mark_no_response(rec_id)
 
     return RedirectResponse("/recommendations", status_code=303)
