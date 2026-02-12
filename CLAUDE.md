@@ -1,6 +1,6 @@
 # nanobot
 
-You are working on **nanobot**, a personal AI assistant framework for K&P Management Consulting (~24k LOC Python). It runs as a Docker container exposing a web dashboard (port 8080) and gateway API (port 18790).
+You are working on **nanobot**, a personal AI assistant framework (~24k LOC Python). It runs as a Docker container exposing a web dashboard (port 8080) and gateway API (port 18790).
 
 ## Critical: Question Ambiguities
 
@@ -17,21 +17,11 @@ Create detailed feature specifications BEFORE writing code. Push back on vague r
 
 ## Current State
 
-**Active branch**: `marketing-assistant` — marketing intelligence & outreach features
+**Web dashboard** at `/` with pages: Chat, Tasks, Health, Memory, Logs, Settings. Chat sidebar uses WebSocket for real-time streaming with session persistence.
 
-**Web dashboard** at `/` with pages: Signals, Leads, Recommendations, Intelligence, Reports, Compose, Chat, Settings. Chat sidebar uses WebSocket for real-time streaming with session persistence.
+**Channels**: Telegram, WhatsApp, Feishu/Lark, Discord, Web
 
-**Marketing subsystem** (`nanobot/marketing/`):
-- `intel_store.py` — SQLite-backed signal & lead storage
-- `scoring.py` — Lead scoring and consultant matching
-- `pipedrive.py` — CRM integration
-- `reports.py` — Report generation (daily brief, weekly, monthly)
-- `consent.py` — GDPR consent tracking
-- `templates/` — Outreach email templates (change, leadership, process, sales, strategy, turnaround)
-
-**Channels**: Telegram, WhatsApp, Feishu/Lark, Discord, Email, Web
-
-**Tools** (in `nanobot/agent/tools/`): CRM, intelligence scanning, lead scoring, email, follow-up, reports, cron, shell, spawn (subagents), MCP install, memory, filesystem, and more.
+**Tools** (in `nanobot/agent/tools/`): cron, shell, spawn (subagents), MCP install, memory, filesystem, and more.
 
 ## Architecture
 
@@ -40,16 +30,13 @@ User -> Channel -> MessageBus -> AgentLoop -> LLM
                         |              |
                         v              v
                    SessionStore    ToolRegistry
-                                       |
-                                  MarketingTools -> IntelStore (SQLite)
-                                                -> Pipedrive (CRM API)
 ```
 
 - **Channels**: Extend `BaseChannel` — async start/stop lifecycle
 - **Message Bus**: Decouples channels from agent via async queues
 - **Agent Loop**: Processes messages, manages tool calls, streams responses
 - **Tools**: Extend `Tool` base class with JSON Schema validation
-- **Web UI**: Starlette app with Jinja2 templates + WebSocket chat
+- **Web UI**: FastAPI app with Jinja2 templates + WebSocket chat
 - **ProviderResolver**: Multi-provider LLM routing (subsystem -> compaction -> default -> priority scan)
 
 ## Key Directories
@@ -59,14 +46,13 @@ nanobot/
 ├── agent/          # Core agent loop, context assembly, tool execution
 │   ├── tools/      # All tool implementations (base.py defines ABC)
 │   └── memory/     # Agent memory subsystem
-├── channels/       # Telegram, WhatsApp, Feishu, Discord, Email, Web
+├── channels/       # Telegram, WhatsApp, Feishu, Discord, Web
 ├── bus/            # Message bus (async queue-based)
 ├── config/         # Pydantic config schema and loading
 ├── llm/            # LiteLLM provider wrapper
-├── marketing/      # Intel store, scoring, CRM, reports, templates
 ├── providers/      # ProviderResolver for multi-LLM routing
 ├── session/        # JSONL-based conversation storage
-├── web/            # Starlette dashboard (routes/, static/, templates/)
+├── web/            # FastAPI dashboard (routes/, static/, templates/)
 ├── cron/           # Scheduled job service (APScheduler + SQLite)
 ├── heartbeat/      # Periodic health checks and autonomous tasks
 ├── mcp/            # MCP server client integration
@@ -85,7 +71,7 @@ tests/              # pytest test suite
 - Python 3.12 (Docker) / 3.13 (local dev) with Hatchling build system
 - Node.js 20+ for WhatsApp bridge only
 - LiteLLM for LLM integration (100+ models)
-- Starlette + Jinja2 for web dashboard
+- FastAPI + Jinja2 for web dashboard
 - Pydantic for configuration validation
 - Typer for CLI
 - Docker Compose for deployment
@@ -132,11 +118,11 @@ cd bridge && npm run build && npm start
 | `nanobot/bus/queue.py` | Message bus implementation |
 | `nanobot/llm/provider.py` | LiteLLM wrapper |
 | `nanobot/providers/resolver.py` | Multi-provider LLM routing |
-| `nanobot/web/app.py` | Starlette web app setup and routes |
+| `nanobot/web/app.py` | FastAPI web app setup and routes |
 | `nanobot/web/routes/chat.py` | WebSocket chat endpoint |
+| `nanobot/web/routes/health.py` | Health dashboard (error metrics) |
+| `nanobot/web/routes/memory.py` | Memory browser (vectors, entities) |
 | `nanobot/web/static/chat.js` | Chat sidebar client (WebSocket + sessions) |
-| `nanobot/marketing/intel_store.py` | SQLite signal/lead storage |
-| `nanobot/marketing/scoring.py` | Lead scoring engine |
 | `docker-compose.yml` | Docker deployment config |
 | `Dockerfile` | Container build definition |
 

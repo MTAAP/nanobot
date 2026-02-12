@@ -123,7 +123,7 @@ Information about the user goes here.
     for filename, content in templates.items():
         file_path = workspace / filename
         if not file_path.exists():
-            file_path.write_text(content)
+            file_path.write_text(content, encoding="utf-8")
             console.print(f"  [dim]Created {filename}[/dim]")
 
     # Create memory directory and MEMORY.md
@@ -131,7 +131,8 @@ Information about the user goes here.
     memory_dir.mkdir(exist_ok=True)
     memory_file = memory_dir / "MEMORY.md"
     if not memory_file.exists():
-        memory_file.write_text("""# Long-term Memory
+        memory_file.write_text(
+            """# Long-term Memory
 
 This file stores important information that should persist across sessions.
 
@@ -146,7 +147,9 @@ This file stores important information that should persist across sessions.
 ## Important Notes
 
 (Things to remember)
-""")
+""",
+            encoding="utf-8",
+        )
         console.print("  [dim]Created memory/MEMORY.md[/dim]")
 
 
@@ -397,42 +400,20 @@ def gateway(
     if daemon_cfg.self_evolve.enabled:
         console.print("[green]>[/green] Self-evolution enabled")
 
-    # Embed web dashboard if marketing web is enabled
+    # Embed web dashboard if web is enabled
     fastapi_app = None
-    if config.marketing.web.enabled:
-        from nanobot.marketing.consent import ConsentStore
-        from nanobot.marketing.intel_store import IntelStore
+    if config.web.enabled:
         from nanobot.web.app import create_app
         from nanobot.web.auth import AuthManager
 
-        data_dir = Path.home() / ".nanobot" / "data"
-        intel_store = IntelStore(db_path=data_dir / "intel.db")
-        consent_store = ConsentStore(db_path=data_dir / "consent.db")
-
-        pipedrive_client = None
-        marketing_cfg = config.marketing
-        if marketing_cfg.pipedrive.enabled and marketing_cfg.pipedrive.api_token:
-            try:
-                from nanobot.marketing.pipedrive import PipedriveClient
-
-                pipedrive_client = PipedriveClient(
-                    api_token=marketing_cfg.pipedrive.api_token,
-                    api_url=marketing_cfg.pipedrive.api_url,
-                )
-            except ImportError:
-                pass
-
         web_channel = channels.get_channel("web")
         auth_manager = AuthManager(
-            username=marketing_cfg.web.username,
-            password_hash=marketing_cfg.web.password_hash,
-            secret_key=marketing_cfg.web.secret_key or "nanobot-dev-key",
+            username=config.web.username,
+            password_hash=config.web.password_hash,
+            secret_key=config.web.secret_key or "nanobot-dev-key",
         )
 
         fastapi_app = create_app(
-            intel_store=intel_store,
-            pipedrive_client=pipedrive_client,
-            consent_store=consent_store,
             auth_manager=auth_manager,
             message_bus=bus,
             agent=agent,
@@ -442,12 +423,9 @@ def gateway(
             timezone=config.agents.defaults.timezone,
         )
 
-        web_host = marketing_cfg.web.host or "0.0.0.0"
-        web_port = marketing_cfg.web.port or 8080
+        web_host = config.web.host or "0.0.0.0"
+        web_port = config.web.port or 8080
         console.print(f"[green]>[/green] Web dashboard on {web_host}:{web_port}")
-
-        # Seed marketing cron jobs (idempotent - skips if name exists)
-        _seed_marketing_cron_jobs(cron)
 
     async def run():
         try:
@@ -474,65 +452,6 @@ def gateway(
             await channels.stop_all()
 
     asyncio.run(run())
-
-
-def _seed_marketing_cron_jobs(cron_service: "CronService") -> None:  # noqa: F821
-    """Seed marketing intelligence cron jobs (idempotent)."""
-    from nanobot.cron.types import CronSchedule
-
-    jobs = [
-        {
-            "name": "marketing:news_scan",
-            "schedule": CronSchedule(kind="cron", expr="0 */6 * * *"),
-            "message": (
-                "Scan for new market intelligence signals. "
-                "Use market_intelligence:scan_news to search for German business news, "
-                "then market_intelligence:analyze_signals to extract structured signals."
-            ),
-        },
-        {
-            "name": "marketing:score_leads",
-            "schedule": CronSchedule(kind="cron", expr="0 8 * * *"),
-            "message": (
-                "Score all current leads. Use lead_scoring:score_all to compute lead scores, "
-                "then lead_scoring:match_consultant for any hot-tier leads."
-            ),
-        },
-        {
-            "name": "marketing:daily_brief",
-            "schedule": CronSchedule(kind="cron", expr="0 7 * * *"),
-            "message": "Generate the daily intelligence brief. Use market_report:daily_brief.",
-        },
-        {
-            "name": "marketing:weekly_report",
-            "schedule": CronSchedule(kind="cron", expr="0 8 * * 1"),
-            "message": (
-                "Generate the weekly intelligence report. Use market_report:weekly_report."
-            ),
-        },
-        {
-            "name": "marketing:stale_outreach",
-            "schedule": CronSchedule(kind="cron", expr="0 9 * * *"),
-            "message": (
-                "Check for stale outreach. Use crm:list_outreach_tracking to find "
-                "outreach that has been awaiting response for more than 7 days "
-                "and suggest follow-up actions."
-            ),
-        },
-    ]
-
-    seeded = 0
-    for job_def in jobs:
-        result = cron_service.add_job(
-            name=job_def["name"],
-            schedule=job_def["schedule"],
-            message=job_def["message"],
-        )
-        if result:
-            seeded += 1
-
-    if seeded:
-        logger.info(f"Seeded {seeded} marketing cron jobs")
 
 
 # ============================================================================
@@ -1582,7 +1501,7 @@ def reset(
 
 
 # ============================================================================
-# Marketing Dashboard (serve)
+# Web Dashboard (serve)
 # ============================================================================
 
 
@@ -1592,7 +1511,7 @@ def serve(
     port: int = typer.Option(8080, "--port", "-p", help="Dashboard port"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output"),
 ):
-    """Start the K&P Marketing web dashboard."""
+    """Start the nanobot web dashboard."""
     import uvicorn
 
     from nanobot.config.loader import load_config
@@ -1603,51 +1522,27 @@ def serve(
         logging.basicConfig(level=logging.DEBUG)
 
     config = load_config()
-    marketing_cfg = config.marketing
 
     # Override with config values if present
-    if marketing_cfg.web.host:
-        host = marketing_cfg.web.host
-    if marketing_cfg.web.port:
-        port = marketing_cfg.web.port
+    if config.web.host:
+        host = config.web.host
+    if config.web.port:
+        port = config.web.port
 
-    # Initialize marketing backends
-    from nanobot.marketing.consent import ConsentStore
-    from nanobot.marketing.intel_store import IntelStore
     from nanobot.web.app import create_app
     from nanobot.web.auth import AuthManager
 
-    data_dir = Path.home() / ".nanobot" / "data"
-    intel_store = IntelStore(db_path=data_dir / "intel.db")
-    consent_store = ConsentStore(db_path=data_dir / "consent.db")
-
-    # Pipedrive client (optional)
-    pipedrive_client = None
-    if marketing_cfg.pipedrive.enabled and marketing_cfg.pipedrive.api_token:
-        try:
-            from nanobot.marketing.pipedrive import PipedriveClient
-
-            pipedrive_client = PipedriveClient(
-                api_token=marketing_cfg.pipedrive.api_token,
-                api_url=marketing_cfg.pipedrive.api_url,
-            )
-        except ImportError:
-            console.print("[yellow]Pipedrive client not available[/yellow]")
-
     auth_manager = AuthManager(
-        username=marketing_cfg.web.username,
-        password_hash=marketing_cfg.web.password_hash,
-        secret_key=marketing_cfg.web.secret_key or "nanobot-dev-key",
+        username=config.web.username,
+        password_hash=config.web.password_hash,
+        secret_key=config.web.secret_key or "nanobot-dev-key",
     )
 
     fastapi_app = create_app(
-        intel_store=intel_store,
-        pipedrive_client=pipedrive_client,
-        consent_store=consent_store,
         auth_manager=auth_manager,
     )
 
-    console.print(f"{__logo__} Starting K&P Marketing Dashboard on {host}:{port}...")
+    console.print(f"{__logo__} Starting nanobot dashboard on {host}:{port}...")
     uvicorn.run(fastapi_app, host=host, port=port, log_level="info")
 
 

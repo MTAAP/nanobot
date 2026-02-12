@@ -2,7 +2,7 @@
 
 import json
 import time
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -216,9 +216,7 @@ class ErrorLogger:
             "categories_with_errors": list(self._error_counts.keys()),
         }
 
-    def get_top_errors(
-        self, limit: int = 10
-    ) -> list[dict[str, Any]]:
+    def get_top_errors(self, limit: int = 10) -> list[dict[str, Any]]:
         """
         Get top error categories by count.
 
@@ -243,9 +241,7 @@ class ErrorLogger:
             for cat, count in sorted_categories
         ]
 
-    def get_recent_errors(
-        self, minutes: int = 30
-    ) -> list[dict[str, Any]]:
+    def get_recent_errors(self, minutes: int = 30) -> list[dict[str, Any]]:
         """
         Get recent errors from JSONL log.
 
@@ -304,6 +300,7 @@ def init_error_logger(workspace: Path) -> ErrorLogger:
 
 
 # Convenience functions for logging
+
 
 def log_error(
     category: ErrorCategory,

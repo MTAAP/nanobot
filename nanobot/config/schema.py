@@ -58,24 +58,6 @@ class DiscordConfig(BaseModel):
     emoji_error: str = "\u274c"  # X mark
 
 
-class EmailConfig(BaseModel):
-    """Email channel configuration (Gmail via IMAP/SMTP)."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    enabled: bool = False
-    imap_host: str = Field(default="imap.gmail.com", alias="imapHost")
-    imap_port: int = Field(default=993, alias="imapPort")
-    smtp_host: str = Field(default="smtp.gmail.com", alias="smtpHost")
-    smtp_port: int = Field(default=587, alias="smtpPort")
-    username: str = ""
-    password: str = ""  # App-specific password for Gmail
-    allow_from: list[str] = Field(default_factory=list, alias="allowFrom")
-    default_chat_id: str = Field(default="", alias="defaultChatId")  # Default recipient
-    poll_interval: int = Field(default=60, alias="pollInterval")  # Seconds between IMAP polls
-    folder: str = "INBOX"
-
-
 class ChannelsConfig(BaseModel):
     """Configuration for chat channels."""
 
@@ -83,7 +65,6 @@ class ChannelsConfig(BaseModel):
     telegram: TelegramConfig = Field(default_factory=TelegramConfig)
     feishu: FeishuConfig = Field(default_factory=FeishuConfig)
     discord: DiscordConfig = Field(default_factory=DiscordConfig)
-    email: EmailConfig = Field(default_factory=EmailConfig)
 
     def get_notification_channel(self) -> tuple[str, str] | None:
         """Return (channel_name, chat_id) for the first enabled channel with a default ID."""
@@ -95,8 +76,6 @@ class ChannelsConfig(BaseModel):
             return ("whatsapp", self.whatsapp.default_chat_id)
         if self.feishu.enabled and self.feishu.default_chat_id:
             return ("feishu", self.feishu.default_chat_id)
-        if self.email.enabled and self.email.default_chat_id:
-            return ("email", self.email.default_chat_id)
         return None
 
 
@@ -391,59 +370,6 @@ class ToolsConfig(BaseModel):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
 
 
-class PipedriveConfig(BaseModel):
-    """Pipedrive CRM configuration."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    enabled: bool = False
-    api_token: str = Field(default="", alias="apiToken")
-    api_url: str = Field(default="https://api.pipedrive.com/v1", alias="apiUrl")
-    sync_interval_minutes: int = Field(default=30, alias="syncIntervalMinutes")
-
-
-class IntelligenceConfig(BaseModel):
-    """Market intelligence configuration."""
-
-    model_config = ConfigDict(populate_by_name=True)
-
-    search_queries: list[str] = Field(
-        default_factory=lambda: [
-            "Umstrukturierung Deutschland Unternehmen",
-            "CEO Wechsel DAX MDAX",
-            "digitale Transformation Mittelstand",
-            "Unternehmensberatung Auftrag",
-            "Restrukturierung Insolvenz",
-            "Führungswechsel Vorstand",
-        ],
-        alias="searchQueries",
-    )
-    scan_interval_hours: int = Field(default=6, alias="scanIntervalHours")
-    target_industries: list[str] = Field(
-        default_factory=lambda: [
-            "automotive",
-            "manufacturing",
-            "financial_services",
-            "healthcare",
-            "technology",
-            "energy",
-        ],
-        alias="targetIndustries",
-    )
-    target_regions: list[str] = Field(
-        default_factory=lambda: [
-            "DACH",
-            "Germany",
-            "Austria",
-            "Switzerland",
-        ],
-        alias="targetRegions",
-    )
-    company_watchlist: list[str] = Field(default_factory=list, alias="companyWatchlist")
-    news_sources: list[str] = Field(default_factory=list, alias="newsSources")
-    min_relevance_score: float = Field(default=0.5, alias="minRelevanceScore")
-
-
 class WebDashboardConfig(BaseModel):
     """Web dashboard configuration."""
 
@@ -457,14 +383,6 @@ class WebDashboardConfig(BaseModel):
     secret_key: str = Field(default="", alias="secretKey")
 
 
-class MarketingConfig(BaseModel):
-    """Marketing assistant configuration."""
-
-    pipedrive: PipedriveConfig = Field(default_factory=PipedriveConfig)
-    intelligence: IntelligenceConfig = Field(default_factory=IntelligenceConfig)
-    web: WebDashboardConfig = Field(default_factory=WebDashboardConfig)
-
-
 class Config(BaseSettings):
     """Root configuration for nanobot."""
 
@@ -473,7 +391,7 @@ class Config(BaseSettings):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)
     gateway: GatewayConfig = Field(default_factory=GatewayConfig)
     tools: ToolsConfig = Field(default_factory=ToolsConfig)
-    marketing: MarketingConfig = Field(default_factory=MarketingConfig)
+    web: WebDashboardConfig = Field(default_factory=WebDashboardConfig)
 
     @property
     def workspace_path(self) -> Path:

@@ -38,15 +38,17 @@ class AuthManager:
     def verify_password(self, password: str) -> bool:
         """Verify a password against the stored hash."""
         if not self._password_hash:
-            # If no hash configured, accept any non-empty password
             return bool(password)
         if bcrypt:
             try:
                 return bcrypt.verify(password, self._password_hash)
             except Exception:
                 return False
-        # Fallback: plain text comparison (not for production)
         return password == self._password_hash
+
+    def verify_credentials(self, username: str, password: str) -> bool:
+        """Verify username and password."""
+        return username == self._username and self.verify_password(password)
 
     def create_session(self, username: str) -> str:
         """Create a signed session token."""
@@ -91,9 +93,9 @@ def create_auth_routes(templates: Jinja2Templates) -> APIRouter:
         password = form.get("password", "")
 
         auth: AuthManager = request.app.state.auth
-        if username == auth._username and auth.verify_password(password):
+        if auth.verify_credentials(username, password):
             token = auth.create_session(username)
-            response = RedirectResponse("/signals", status_code=303)
+            response = RedirectResponse("/chat", status_code=303)
             response.set_cookie(
                 AuthManager.COOKIE_NAME,
                 token,

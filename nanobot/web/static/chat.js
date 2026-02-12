@@ -26,36 +26,13 @@ function renderMarkdown(text) {
         .replace(/\n/g, '<br>');
 }
 
-function openChat(context, id) {
+function openChat() {
     const sidebar = document.getElementById('chat-sidebar');
     if (!sidebar) return;
 
     sidebar.classList.remove('hidden');
     document.body.classList.add('chat-open');
-
-    if (context && id) {
-        // Context-specific chat: create new session immediately
-        inActiveChat = true;
-        const titleEl = document.getElementById('chat-title');
-        const labels = {
-            signal: 'Signal',
-            lead: 'Lead',
-            recommendation: 'Recommendation'
-        };
-        titleEl.textContent =
-            'Discuss ' + (labels[context] || context) + ' #' + id;
-
-        const messagesEl = document.getElementById('chat-messages');
-        messagesEl.innerHTML = '';
-        streamingMsgEl = null;
-
-        showInputArea();
-        chatSessionId = generateSessionId();
-        connectWebSocket(context, id);
-    } else {
-        // No context: show session list
-        showSessionList();
-    }
+    showSessionList();
 }
 
 function closeSidebar() {
@@ -270,18 +247,13 @@ function formatTimeAgo(isoDate) {
     return months[date.getMonth()] + ' ' + date.getDate();
 }
 
-function connectWebSocket(context, id) {
+function connectWebSocket() {
     disconnectWebSocket();
 
     var protocol =
         window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = protocol + '//' + window.location.host
         + '/chat/ws/' + chatSessionId;
-
-    if (context && id) {
-        url += '?context=' + encodeURIComponent(context)
-            + '&id=' + encodeURIComponent(id);
-    }
 
     chatWs = new WebSocket(url);
 
@@ -339,7 +311,7 @@ function connectWebSocket(context, id) {
             appendStatus('Disconnected');
             reconnectTimer = setTimeout(function() {
                 if (inActiveChat) {
-                    connectWebSocket(context, id);
+                    connectWebSocket();
                 }
             }, 3000);
         }
@@ -434,96 +406,6 @@ function hideTyping() {
     if (typingEl) {
         typingEl.style.display = 'none';
     }
-}
-
-/* Intelligence scan launchers */
-
-function launchScan() {
-    var topics =
-        document.getElementById('scan-topics')?.value || '';
-    var region =
-        document.getElementById('scan-region')?.value || '';
-    var industry =
-        document.getElementById('scan-industry')?.value || '';
-    var service =
-        document.getElementById('scan-service')?.value || '';
-
-    var prompt = 'Scan for new market intelligence signals';
-    var refinements = [];
-    if (topics) refinements.push('focused on: ' + topics);
-    if (region) refinements.push('in ' + region);
-    if (industry) {
-        refinements.push(
-            'in the ' + industry + ' industry'
-        );
-    }
-    if (service) {
-        refinements.push(
-            'relevant to our ' + service + ' practice'
-        );
-    }
-
-    if (refinements.length) {
-        prompt += ' ' + refinements.join(', ');
-    }
-    prompt += '. Use market_intelligence deep_scan to perform'
-        + ' a comprehensive search, fetch articles,'
-        + ' and extract signals. Report what you find.';
-
-    openChatAndSend(prompt);
-}
-
-function launchCompanyScan() {
-    var company =
-        document.getElementById('company-name')?.value || '';
-    if (!company) return;
-    openChatAndSend(
-        'Deep dive on ' + company
-        + '. Use scan_company to find recent news,'
-        + ' then analyze_signals to extract'
-        + ' structured signals.'
-        + ' Score the lead and suggest K&P services.'
-    );
-}
-
-function launchScoring() {
-    openChatAndSend(
-        'Score all current leads and match'
-        + ' top leads to consultants.'
-        + ' Generate recommendations for hot leads.'
-        + ' Use score_all and match_consultant tools.'
-    );
-}
-
-/* Compose page helpers */
-
-function openInEmailClient() {
-    var recipient =
-        document.getElementById('recipient')?.value || '';
-    var subject =
-        document.getElementById('subject')?.value || '';
-    var body =
-        document.getElementById('email-body')?.value || '';
-    var mailto = 'mailto:' + encodeURIComponent(recipient)
-        + '?subject=' + encodeURIComponent(subject)
-        + '&body=' + encodeURIComponent(body);
-    window.location.href = mailto;
-}
-
-function regenerateEmail() {
-    var company =
-        document.getElementById('compose-company')
-            ?.value || '';
-    var anrede =
-        document.getElementById('anrede')?.value || '';
-    var nachname =
-        document.getElementById('nachname')?.value || '';
-    openChatAndSend(
-        'Regenerate the outreach email for ' + company
-        + '. Address it to ' + anrede + ' ' + nachname
-        + '. Make it compelling and specific'
-        + ' to their situation.'
-    );
 }
 
 // Handle Enter key in textarea

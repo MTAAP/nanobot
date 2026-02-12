@@ -342,106 +342,12 @@ class AgentLoop:
             FollowUpTool(db_path=Path.home() / ".nanobot" / "data" / "followups.db")
         )
 
-        # Marketing tools (registered when marketing config is available)
-        self._register_marketing_tools()
-
         # Self-evolution tool (if enabled)
         if self._evolve_manager:
             from nanobot.agent.tools.evolve import SelfEvolveTool
 
             self.tools.register(SelfEvolveTool(self._evolve_manager))
             self.context.self_evolve_enabled = True
-
-    def _register_marketing_tools(self) -> None:
-        """Register marketing-specific tools when marketing backends are available."""
-        try:
-            from nanobot.marketing.consent import ConsentStore
-            from nanobot.marketing.intel_store import IntelStore
-            from nanobot.marketing.reports import ReportGenerator
-            from nanobot.marketing.scoring import LeadScorer, RecommendationEngine
-
-            data_dir = Path.home() / ".nanobot" / "data"
-            intel_store = IntelStore(db_path=data_dir / "intel.db")
-            consent_store = ConsentStore(db_path=data_dir / "consent.db")
-            report_generator = ReportGenerator()
-            scorer = LeadScorer()
-            rec_engine = RecommendationEngine()
-
-            # CRM tool (routes to Pipedrive + local store)
-            from nanobot.agent.tools.crm import CRMTool
-
-            pipedrive_client = None
-            try:
-                from nanobot.config.loader import load_config
-
-                cfg = load_config()
-                if cfg.marketing.pipedrive.enabled and cfg.marketing.pipedrive.api_token:
-                    from nanobot.marketing.pipedrive import PipedriveClient
-
-                    pipedrive_client = PipedriveClient(
-                        api_token=cfg.marketing.pipedrive.api_token,
-                        api_url=cfg.marketing.pipedrive.api_url,
-                    )
-            except Exception as e:
-                logger.debug(f"Pipedrive not configured: {e}")
-
-            self.tools.register(
-                CRMTool(
-                    pipedrive_client=pipedrive_client,
-                    intel_store=intel_store,
-                    consent_store=consent_store,
-                )
-            )
-
-            # Send email tool
-            from nanobot.agent.tools.email import SendEmailTool
-
-            email_tool = SendEmailTool(
-                send_callback=self.bus.publish_outbound,
-                consent_store=consent_store,
-                report_generator=report_generator,
-            )
-            self.tools.register(email_tool)
-
-            # Market intelligence tool
-            from nanobot.agent.tools.intelligence import MarketIntelligenceTool
-
-            self.tools.register(
-                MarketIntelligenceTool(
-                    intel_store=intel_store,
-                    brave_api_key=self.brave_api_key,
-                    provider=self.provider,
-                    model=self.model,
-                    notification_store=self.notification_store,
-                )
-            )
-
-            # Lead scoring tool
-            from nanobot.agent.tools.lead_scoring import LeadScoringTool
-
-            self.tools.register(
-                LeadScoringTool(
-                    intel_store=intel_store,
-                    scorer=scorer,
-                    recommendation_engine=rec_engine,
-                )
-            )
-
-            # Market report tool
-            from nanobot.agent.tools.report import MarketReportTool
-
-            self.tools.register(
-                MarketReportTool(
-                    report_generator=report_generator,
-                    intel_store=intel_store,
-                )
-            )
-
-            logger.info("Marketing tools registered")
-        except ImportError as e:
-            logger.debug(f"Marketing tools not available: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to register marketing tools: {e}")
 
     def _init_evolve_manager(self, daemon_config: "DaemonConfig") -> None:
         """Initialize the self-evolution manager from config."""
