@@ -1,33 +1,16 @@
 # Heartbeat Tasks
 
 This file is checked every 30 minutes by your nanobot agent.
-Add tasks below that you want to agent to work on periodically.
+Add tasks below that you want the agent to work on periodically.
 
-If this file has no tasks (only headers and comments), the agent will skip processing.
+If this file has no tasks (only headers and comments), the agent will skip the heartbeat.
 
 ## Active Tasks
 
-### Self-Evolution Tasks
+<!-- Add your periodic tasks below this line -->
 
-- [ ] **Weekly**: Web search for AI agent error logging best practices 2025 and evaluate against current ErrorLogger implementation
-- [ ] **Weekly**: Web search for AI agent observability frameworks and new features that could benefit nanobot
-- [ ] **Weekly**: Review top 10 error categories from ErrorLogger and create feature issues for recurring patterns
-- [ ] **Weekly**: Research new AI agentic frameworks (AutoGen, ReWOO, LangGraph, etc.) and evaluate for nanobot
-- [ ] **Weekly**: Review nanobot repo GitHub issues and pull requests for feature requests and bugs
-- [ ] **Monthly**: Review and update SELF_EVOLUTION.md roadmap based on findings
-- [ ] **Monthly**: Generate summary report of self-evolution progress and learnings
-- [ ] **Continuous**: Use `/learn` skill whenever you encounter a new technology or need deeper understanding
-
-### Integration Tasks
-
-- [ ] **High Priority**: Integrate ErrorLogger into nanobot agent loop (nanobot/agent/loop.py)
-- [ ] **High Priority**: Register HealthCheckTool in agent loop (in _register_default_tools method)
-- [ ] **High Priority**: Add OpenSpec workflows to nanobot repo (.github/workflows/openspec-interview-pr.yml and openspec-proposal-from-pr.yml)
-- [ ] **Medium Priority**: Add execution tracing to capture full agent decision flows (not just errors)
-- [ ] **Medium Priority**: Add decision logging to capture LLM choices before tool execution
-- [ ] **Medium Priority**: Add token/latency metrics per tool call
-- [ ] **Low Priority**: Add quality evaluation metrics for agent responses
 
 ## Completed
 
 <!-- Move completed tasks here or delete them -->
+
