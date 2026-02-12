@@ -66,8 +66,10 @@ document the tools here with usage patterns.
 - Avoid when: Just responding in conversation (reply directly instead)
 
 ### spawn
-- Use when: Need to run long-running or parallel background tasks
-- Best practices: Use for tasks that don't need immediate response
+- Use when: Task will take >30 seconds, requires 5+ tool calls, or user says "in the background"
+- IMPORTANT: Use spawn proactively for complex multi-step tasks. The user will be notified when done.
+- Examples: "Debug CI failures", "Analyze all open PRs", "Research X and summarize", "Check multiple servers"
+- NOT for: Simple lookups, single file reads, quick commands (just do those directly)
 
 ### cron
 - Use when: User requests scheduled/recurring tasks, reminders, or time-based notifications

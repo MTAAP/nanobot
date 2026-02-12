@@ -1332,7 +1332,9 @@ class AgentLoop:
         The chat_id field contains "original_channel:original_chat_id" to route
         the response back to the correct destination.
         """
-        logger.info(f"Processing system message from {msg.sender_id}")
+        logger.info(
+            f"Processing system message from {msg.sender_id}, routing to {msg.chat_id}"
+        )
 
         # Parse origin from chat_id (format: "channel:chat_id")
         if ":" in msg.chat_id:
