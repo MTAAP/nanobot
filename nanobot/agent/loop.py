@@ -1217,7 +1217,10 @@ class AgentLoop:
                 break
 
         if final_content is None:
-            final_content = "I've completed processing but have no response to give."
+            final_content = (
+                "I've reached my processing limit. "
+                "Please rephrase your question or ask for something more specific."
+            )
 
         # Post-loop action verification: detect hallucinated actions.
         # If the LLM claimed to perform actions but never called any tools,
