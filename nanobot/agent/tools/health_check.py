@@ -29,7 +29,7 @@ class HealthCheckTool(Tool):
             "properties": {
                 "scope": {
                     "type": "string",
-                    "description": ("What to check: 'all', 'errors', 'recent', or 'summary'"),
+                    "description": "What to check: 'all', 'errors', 'recent', or 'summary'",
                     "enum": ["all", "errors", "recent", "summary"],
                     "default": "summary",
                 },

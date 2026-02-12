@@ -255,6 +255,7 @@ def gateway(
         tool_temperature=config.agents.defaults.tool_temperature,
         timezone=config.agents.defaults.timezone,
         notification_store=notification_store,
+        max_concurrent_subagents=config.agents.defaults.max_concurrent_subagents,
     )
 
     # Set the cron callback using agent's process_direct
@@ -507,6 +508,7 @@ def agent(
         streaming_config=config.agents.defaults.streaming,
         tracing_config=config.agents.defaults.tracing,
         guardrail_config=config.agents.defaults.guardrails,
+        max_concurrent_subagents=config.agents.defaults.max_concurrent_subagents,
     )
 
     if message:

@@ -273,6 +273,7 @@ class AgentDefaults(BaseModel):
     tracing: TracingConfig = Field(default_factory=TracingConfig)
     guardrails: GuardrailConfig = Field(default_factory=GuardrailConfig)
     daemon: DaemonConfig = Field(default_factory=DaemonConfig, alias="daemon")
+    max_concurrent_subagents: int = Field(default=5, alias="maxConcurrentSubagents")
     intent: IntentConfig = Field(default_factory=IntentConfig)
 
 

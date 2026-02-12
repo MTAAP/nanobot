@@ -19,7 +19,6 @@ async def logs_page(request: Request):
     error_logger = get_error_logger()
     recent = error_logger.get_recent_errors(minutes=60) if error_logger else []
 
-    # Build category list for filter dropdown
     categories = [c.value for c in ErrorCategory]
 
     templates = request.app.state.templates
@@ -46,7 +45,6 @@ async def api_stream(request: Request):
         return JSONResponse([])
 
     records = error_logger.get_recent_errors(minutes=10)
-    # Format timestamps for display
     for r in records:
         ts = r.get("timestamp", 0)
         if ts:
@@ -72,13 +70,11 @@ async def api_filter(request: Request):
 
     records = error_logger.get_recent_errors(minutes=minutes)
 
-    # Apply filters
     if category:
         records = [r for r in records if r.get("category") == category]
     if severity:
         records = [r for r in records if r.get("severity") == severity]
 
-    # Format timestamps
     for r in records:
         ts = r.get("timestamp", 0)
         if ts:

@@ -19,7 +19,6 @@ async def health_page(request: Request):
     top_errors = error_logger.get_top_errors(limit=10) if error_logger else []
     recent = error_logger.get_recent_errors(minutes=60) if error_logger else []
 
-    # Determine status level
     errors_per_hour = metrics.get("errors_last_hour", 0)
     if errors_per_hour == 0:
         status = "HEALTHY"

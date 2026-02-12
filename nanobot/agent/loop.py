@@ -17,7 +17,7 @@ from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTo
 from nanobot.agent.tools.message import MessageTool
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.spawn import SpawnTool
+from nanobot.agent.tools.spawn import SpawnBatchTool, SpawnTool
 from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.agent.tracing import Tracer
 from nanobot.agent.usage import UsageRecord, UsageTracker
@@ -152,6 +152,7 @@ class AgentLoop:
         tool_temperature: float = 0.0,
         timezone: str = "UTC",
         notification_store: Any = None,
+        max_concurrent_subagents: int = 5,
     ):
         from nanobot.config.schema import (
             CompactionConfig,
@@ -245,6 +246,7 @@ class AgentLoop:
             registry=self._registry,
             evolve_manager=self._evolve_manager,
             progress_callback=bus.publish_progress,
+            max_concurrent=max_concurrent_subagents,
         )
 
         # MCP manager (initialized in run())
@@ -307,6 +309,10 @@ class AgentLoop:
         # Spawn tool (for subagents)
         spawn_tool = SpawnTool(manager=self.subagents, registry=self._registry)
         self.tools.register(spawn_tool)
+
+        # Batch spawn tool (parallel subagents with collected results)
+        batch_tool = SpawnBatchTool(manager=self.subagents)
+        self.tools.register(batch_tool)
 
         # Tmux tool (persistent shell sessions)
         from nanobot.agent.tools.tmux import TmuxTool
@@ -635,6 +641,132 @@ class AgentLoop:
         elif action == "deny":
             self._guardrails.deny(approval_id)
 
+    async def _execute_single_tool(
+        self,
+        tool_call: Any,
+        channel: str,
+        chat_id: str,
+        iteration: int,
+        metadata: dict[str, Any] | None = None,
+        parallel: bool = False,
+    ) -> str:
+        """Execute a single tool call with validation, progress, and tracing.
+
+        Args:
+            tool_call: The tool call from the LLM response.
+            channel: Origin channel for progress events.
+            chat_id: Origin chat ID for progress events.
+            iteration: Current agent loop iteration.
+            metadata: Message metadata for progress events.
+            parallel: If True, skip setting tool._progress (not safe
+                when multiple tools share the same Tool instance).
+
+        Returns:
+            The tool result string (already truncated).
+        """
+        tool = self.tools.get(tool_call.name)
+        if not tool:
+            logger.warning(f"LLM called unknown tool: {tool_call.name}")
+            return f"Error: unknown tool '{tool_call.name}'"
+
+        errors = tool.validate_params(tool_call.arguments)
+        if errors:
+            logger.warning(f"Tool validation failed: {tool_call.name} - {errors}")
+            return f"Error: invalid arguments for {tool_call.name} - {'; '.join(errors)}"
+
+        rule = self._guardrails.check(
+            tool_call.name,
+            tool_call.arguments,
+        )
+        if rule:
+            approval_id = self._guardrails.request_approval(
+                rule,
+                tool_call.name,
+                tool_call.arguments,
+            )
+            approved = await self._guardrails.wait_for_approval(
+                approval_id,
+            )
+            if not approved:
+                return (
+                    f"Error: {rule.description} blocked by guardrail (approval denied or timed out)"
+                )
+
+        args_str = json.dumps(tool_call.arguments)
+        logger.debug(f"Executing tool: {tool_call.name} with arguments: {args_str}")
+        await self._emit_progress(
+            channel,
+            chat_id,
+            ProgressKind.TOOL_START,
+            tool_name=tool_call.name,
+            detail=f"Executing {tool_call.name}",
+            iteration=iteration,
+            total_iterations=self.max_iterations,
+            metadata=metadata,
+        )
+
+        # Per-step progress callback — only safe in sequential mode
+        # because tool instances are shared singletons.
+        if not parallel:
+            tool._progress = lambda detail: self._emit_progress(
+                channel,
+                chat_id,
+                ProgressKind.TOOL_START,
+                tool_name=tool_call.name,
+                detail=detail,
+                metadata=metadata,
+            )
+
+        async with self._tracer.span(
+            "tool_exec",
+            attributes={"tool": tool_call.name},
+        ):
+            result = await self.tools.execute(
+                tool_call.name,
+                tool_call.arguments,
+            )
+
+        if not parallel:
+            tool._progress = None
+
+        tool_status = "error" if isinstance(result, str) and result.startswith("Error") else "ok"
+        await self._emit_progress(
+            channel,
+            chat_id,
+            ProgressKind.TOOL_COMPLETE,
+            tool_name=tool_call.name,
+            detail=f"{tool_call.name}: {tool_status}",
+            iteration=iteration,
+            total_iterations=self.max_iterations,
+            metadata=metadata,
+        )
+
+        # Reflexion: track consecutive tool failures
+        if isinstance(result, str) and result.startswith("Error"):
+            count = self._tool_failure_counts.get(tool_call.name, 0) + 1
+            self._tool_failure_counts[tool_call.name] = count
+            if count >= self._tool_failure_threshold:
+                self._record_tool_lesson(
+                    tool_call.name,
+                    tool_call.arguments,
+                    result,
+                    count,
+                )
+                self._tool_failure_counts[tool_call.name] = 0
+        else:
+            self._tool_failure_counts.pop(tool_call.name, None)
+
+        # Proactive follow-up hints
+        hint = self._check_follow_up(
+            tool_call.name,
+            tool_call.arguments,
+            result,
+        )
+        if hint:
+            result = f"{result}\n{hint}"
+
+        return self._truncate_tool_result(result)
+
     def _check_follow_up(
         self,
         tool_name: str,
@@ -868,6 +1000,10 @@ class AgentLoop:
         if isinstance(spawn_tool, SpawnTool):
             spawn_tool.set_context(msg.channel, msg.chat_id)
 
+        batch_spawn = self.tools.get("spawn_batch")
+        if isinstance(batch_spawn, SpawnBatchTool):
+            batch_spawn.set_context(msg.channel, msg.chat_id)
+
         # Update cron tool context
         from nanobot.agent.tools.cron import CronTool
 
@@ -1015,126 +1151,58 @@ class AgentLoop:
                     messages, response.content, tool_call_dicts
                 )
 
-                # Execute tools with validation
-                for tool_call in response.tool_calls:
-                    tool = self.tools.get(tool_call.name)
-                    if not tool:
-                        result = f"Error: unknown tool '{tool_call.name}'"
-                        logger.warning(f"LLM called unknown tool: {tool_call.name}")
-                    else:
-                        errors = tool.validate_params(tool_call.arguments)
-                        if errors:
-                            result = (
-                                f"Error: invalid arguments for "
-                                f"{tool_call.name} - {'; '.join(errors)}"
-                            )
-                            logger.warning(f"Tool validation failed: {tool_call.name} - {errors}")
-                        else:
-                            # Guardrail check before execution
-                            rule = self._guardrails.check(
-                                tool_call.name,
-                                tool_call.arguments,
-                            )
+                # Execute tools — parallel when multiple, sequential
+                # when single or when guardrails require approval.
+                use_parallel = len(response.tool_calls) > 1
+                if use_parallel:
+                    for tc in response.tool_calls:
+                        tool = self.tools.get(tc.name)
+                        if tool and tool.validate_params(tc.arguments) == []:
+                            rule = self._guardrails.check(tc.name, tc.arguments)
                             if rule:
-                                approval_id = self._guardrails.request_approval(
-                                    rule,
-                                    tool_call.name,
-                                    tool_call.arguments,
-                                )
-                                approved = await self._guardrails.wait_for_approval(
-                                    approval_id,
-                                )
-                                if not approved:
-                                    result = (
-                                        f"Error: {rule.description} blocked by guardrail "
-                                        f"(approval denied or timed out)"
-                                    )
-                                    messages = self.context.add_tool_result(
-                                        messages,
-                                        tool_call.id,
-                                        tool_call.name,
-                                        result,
-                                    )
-                                    continue
+                                use_parallel = False
+                                break
 
-                            args_str = json.dumps(tool_call.arguments)
-                            logger.debug(
-                                f"Executing tool: {tool_call.name} with arguments: {args_str}"
-                            )
-                            await self._emit_progress(
+                if use_parallel:
+                    results = await asyncio.gather(
+                        *(
+                            self._execute_single_tool(
+                                tc,
                                 msg.channel,
                                 msg.chat_id,
-                                ProgressKind.TOOL_START,
-                                tool_name=tool_call.name,
-                                detail=f"Executing {tool_call.name}",
-                                iteration=iteration,
-                                total_iterations=self.max_iterations,
+                                iteration,
                                 metadata=msg.metadata,
+                                parallel=True,
                             )
-                            # Set per-step progress callback on the tool
-                            tool._progress = lambda detail: self._emit_progress(
-                                msg.channel,
-                                msg.chat_id,
-                                ProgressKind.TOOL_START,
-                                tool_name=tool_call.name,
-                                detail=detail,
-                                metadata=msg.metadata,
-                            )
-                            async with self._tracer.span(
-                                "tool_exec",
-                                attributes={"tool": tool_call.name},
-                            ):
-                                result = await self.tools.execute(
-                                    tool_call.name,
-                                    tool_call.arguments,
-                                )
-                            tool._progress = None
-                            tool_status = (
-                                "error"
-                                if isinstance(result, str) and result.startswith("Error")
-                                else "ok"
-                            )
-                            await self._emit_progress(
-                                msg.channel,
-                                msg.chat_id,
-                                ProgressKind.TOOL_COMPLETE,
-                                tool_name=tool_call.name,
-                                detail=f"{tool_call.name}: {tool_status}",
-                                iteration=iteration,
-                                total_iterations=self.max_iterations,
-                                metadata=msg.metadata,
-                            )
-
-                    # Reflexion: track consecutive tool failures
-                    if isinstance(result, str) and result.startswith("Error"):
-                        count = self._tool_failure_counts.get(tool_call.name, 0) + 1
-                        self._tool_failure_counts[tool_call.name] = count
-                        if count >= self._tool_failure_threshold:
-                            self._record_tool_lesson(
-                                tool_call.name,
-                                tool_call.arguments,
-                                result,
-                                count,
-                            )
-                            self._tool_failure_counts[tool_call.name] = 0
-                    else:
-                        self._tool_failure_counts.pop(tool_call.name, None)
-
-                    # Proactive follow-up hints (F12)
-                    hint = self._check_follow_up(
-                        tool_call.name,
-                        tool_call.arguments,
-                        result,
+                            for tc in response.tool_calls
+                        )
                     )
-                    if hint:
-                        result = f"{result}\n{hint}"
+                    for tc, result in zip(response.tool_calls, results):
+                        messages = self.context.add_tool_result(
+                            messages,
+                            tc.id,
+                            tc.name,
+                            result,
+                        )
+                else:
+                    for tool_call in response.tool_calls:
+                        result = await self._execute_single_tool(
+                            tool_call,
+                            msg.channel,
+                            msg.chat_id,
+                            iteration,
+                            metadata=msg.metadata,
+                            parallel=False,
+                        )
+                        messages = self.context.add_tool_result(
+                            messages,
+                            tool_call.id,
+                            tool_call.name,
+                            result,
+                        )
 
-                    result = self._truncate_tool_result(result)
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
-                    )
-                    # Per-tool compaction check (F10)
-                    messages = await self._maybe_compact(messages, session)
+                # Per-iteration compaction check
+                messages = await self._maybe_compact(messages, session)
             else:
                 # No tool calls -- final response
                 if self._streaming_config.enabled:
@@ -1285,6 +1353,10 @@ class AgentLoop:
         spawn_tool = self.tools.get("spawn")
         if isinstance(spawn_tool, SpawnTool):
             spawn_tool.set_context(origin_channel, origin_chat_id)
+
+        batch_spawn = self.tools.get("spawn_batch")
+        if isinstance(batch_spawn, SpawnBatchTool):
+            batch_spawn.set_context(origin_channel, origin_chat_id)
 
         # Update cron tool context
         from nanobot.agent.tools.cron import CronTool

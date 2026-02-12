@@ -16,7 +16,6 @@ async def memory_page(request: Request):
 
     agent = getattr(request.app.state, "agent", None)
 
-    # Gather stats
     vector_count = 0
     db_size = 0
     entity_count = 0
