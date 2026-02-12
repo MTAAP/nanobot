@@ -282,6 +282,11 @@ class DiscordChannel(BaseChannel):
             elif event.kind == ProgressKind.TOOL_COMPLETE:
                 status = f"`{event.tool_name}` {event.detail}"
             elif event.kind == ProgressKind.STREAMING:
+                if event.detail:
+                    await self._streaming_embed_edit(
+                        channel, key, event.detail, self.EMBED_MAX_LENGTH
+                    )
+                    return
                 status = "Generating response..."
             elif event.kind == ProgressKind.ERROR:
                 status = f"Error: {event.detail}"
@@ -305,6 +310,28 @@ class DiscordChannel(BaseChannel):
 
         except Exception as e:
             logger.debug(f"Progress display failed: {e}")
+
+    async def _streaming_embed_edit(
+        self,
+        channel: discord.abc.Messageable,
+        key: str,
+        content: str,
+        max_length: int,
+    ) -> None:
+        if len(content) > max_length:
+            content = content[: max_length - 3] + "..."
+
+        embed = discord.Embed(description=content, color=0x5865F2)
+        embed.set_footer(text="Generating...")
+
+        if key in self._progress_messages:
+            try:
+                await self._progress_messages[key].edit(embed=embed)
+            except (discord.NotFound, discord.HTTPException):
+                self._progress_messages.pop(key, None)
+        else:
+            msg = await channel.send(embed=embed)
+            self._progress_messages[key] = msg
 
     async def edit(self, msg: OutboundMessage) -> None:
         """Edit a previously sent message by edit_message_id."""

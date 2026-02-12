@@ -40,9 +40,12 @@ class SpawnTool(Tool):
     @property
     def description(self) -> str:
         return (
-            "Spawn a subagent to handle a task in the background. "
-            "Use this for complex or time-consuming tasks that can run independently. "
-            "The subagent will complete the task and report back when done."
+            "Spawn a background subagent to handle a complex task independently. "
+            "Use this when a task will take >30 seconds, requires 5+ tool calls, "
+            "or when the user wants something done 'in the background'. "
+            "The subagent will complete the task and you will be notified with the result. "
+            "Examples: debugging complex issues, analyzing multiple files/PRs, "
+            "web research, checking multiple systems."
         )
 
     @property

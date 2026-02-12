@@ -1217,7 +1217,10 @@ class AgentLoop:
                 break
 
         if final_content is None:
-            final_content = "I've completed processing but have no response to give."
+            final_content = (
+                "I've reached my processing limit. "
+                "Please rephrase your question or ask for something more specific."
+            )
 
         # Post-loop action verification: detect hallucinated actions.
         # If the LLM claimed to perform actions but never called any tools,
@@ -1329,7 +1332,9 @@ class AgentLoop:
         The chat_id field contains "original_channel:original_chat_id" to route
         the response back to the correct destination.
         """
-        logger.info(f"Processing system message from {msg.sender_id}")
+        logger.info(
+            f"Processing system message from {msg.sender_id}, routing to {msg.chat_id}"
+        )
 
         # Parse origin from chat_id (format: "channel:chat_id")
         if ":" in msg.chat_id:
