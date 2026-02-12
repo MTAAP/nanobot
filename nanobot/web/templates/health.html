@@ -3,7 +3,6 @@
 {% block content %}
 <h2 class="text-2xl font-bold text-kp-blue mb-6">System Health</h2>
 
-<!-- Status Banner -->
 <div class="mb-6 rounded-xl shadow-sm overflow-hidden
     {% if status == 'HEALTHY' %}bg-emerald-50 border border-emerald-200
     {% elif status == 'GOOD' %}bg-blue-50 border border-blue-200
@@ -22,7 +21,6 @@
     </div>
 </div>
 
-<!-- Summary Cards -->
 <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
     <div class="bg-white rounded-xl shadow-sm p-5">
         <div class="text-xs uppercase tracking-wide text-kp-blue font-semibold mb-1">Total Errors</div>
@@ -38,7 +36,6 @@
     </div>
 </div>
 
-<!-- Top Error Categories -->
 {% if top_errors %}
 <h3 class="text-lg font-bold text-kp-blue mb-4">Top Error Categories</h3>
 <div class="bg-white rounded-xl shadow-sm overflow-hidden mb-8">
@@ -67,7 +64,6 @@
 </div>
 {% endif %}
 
-<!-- Recent Errors -->
 <h3 class="text-lg font-bold text-kp-blue mb-4">Recent Errors (last hour)</h3>
 <div class="bg-white rounded-xl shadow-sm overflow-hidden">
     {% if recent_errors %}

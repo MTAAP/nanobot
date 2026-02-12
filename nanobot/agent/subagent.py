@@ -163,7 +163,6 @@ class SubagentManager:
             except Exception as e:
                 return (lbl, "error", f"Error: {e}")
 
-        # Run all tasks concurrently (semaphore limits parallelism)
         coros = [_run_one(entry) for entry in tasks]
         try:
             results: list[tuple[str, str, str]] = await asyncio.wait_for(
@@ -171,14 +170,8 @@ class SubagentManager:
                 timeout=timeout_s,
             )
         except asyncio.TimeoutError:
-            results = []
-            for coro in coros:
-                # Gather may have partially completed; cancelled
-                # coroutines will raise but we report the timeout.
-                coro.close()
             return f"Error: batch timed out after {timeout_s}s. Some tasks may not have completed."
 
-        # Format combined result
         parts: list[str] = []
         ok_count = sum(1 for _, s, _ in results if s == "ok")
         fail_count = len(results) - ok_count
@@ -195,7 +188,6 @@ class SubagentManager:
 
         combined = "\n".join(parts)
 
-        # Announce combined result to main agent
         await self._announce_result(
             task_id="batch",
             label=f"batch ({len(results)} tasks)",
@@ -302,65 +294,38 @@ class SubagentManager:
             tools.register(WebSearchTool(api_key=self.brave_api_key))
             tools.register(WebFetchTool())
 
-            # Registry integration: handshake + proof tool + evolve tool
             if self._registry and registry_task_id:
-                from nanobot.registry.handshake import (
-                    AgentHandshake,
-                    HandshakeError,
-                )
+                from nanobot.registry.handshake import AgentHandshake, HandshakeError
                 from nanobot.registry.store import TaskState
 
-                # Perform handshake
-                handshake = AgentHandshake(
-                    self._registry,
-                    self.workspace,
-                )
+                handshake = AgentHandshake(self._registry, self.workspace)
                 try:
                     await handshake.perform(
                         agent_id=agent_id,
                         task_id=registry_task_id,
-                        capabilities=[
-                            "read_file",
-                            "write_file",
-                            "exec",
-                        ],
+                        capabilities=["read_file", "write_file", "exec"],
                         available_tool_names=list(tools.tool_names),
                     )
                 except HandshakeError as e:
                     raise RuntimeError(f"Handshake failed: {e}") from e
 
-                # Transition task to IN_PROGRESS
                 await self._registry.update_task_state(
-                    registry_task_id,
-                    TaskState.IN_PROGRESS,
-                    reason="subagent started",
+                    registry_task_id, TaskState.IN_PROGRESS, reason="subagent started"
                 )
 
-                # Register proof tool
                 from nanobot.agent.tools.proof import SubmitProofTool
 
-                tools.register(
-                    SubmitProofTool(
-                        registry=self._registry,
-                        task_id=registry_task_id,
-                    )
-                )
+                tools.register(SubmitProofTool(registry=self._registry, task_id=registry_task_id))
 
-                # Register evolve tool if available
                 if self._evolve_manager:
                     from nanobot.agent.tools.evolve import SelfEvolveTool
 
                     tools.register(SelfEvolveTool(self._evolve_manager))
 
-                # Start pulse loop
-                pulse_task = asyncio.create_task(
-                    self._pulse_loop(agent_id, interval=60),
-                )
+                pulse_task = asyncio.create_task(self._pulse_loop(agent_id, interval=60))
 
-            # Build messages with subagent-specific prompt
             system_prompt = self._build_subagent_prompt(
-                task,
-                has_registry=bool(self._registry and registry_task_id),
+                task, has_registry=bool(self._registry and registry_task_id)
             )
             messages: list[dict[str, Any]] = [
                 {"role": "system", "content": system_prompt},
@@ -412,14 +377,11 @@ class SubagentManager:
                                     chat_id=origin["chat_id"],
                                     kind=ProgressKind.TOOL_START,
                                     tool_name=tool_call.name,
-                                    detail=(f"[subagent] Executing {tool_call.name}"),
+                                    detail=f"[subagent] Executing {tool_call.name}",
                                     iteration=iteration,
                                 )
                             )
-                        result = await tools.execute(
-                            tool_call.name,
-                            tool_call.arguments,
-                        )
+                        result = await tools.execute(tool_call.name, tool_call.arguments)
                         if self._progress_callback and not silent:
                             status = (
                                 "error"
@@ -432,7 +394,7 @@ class SubagentManager:
                                     chat_id=origin["chat_id"],
                                     kind=ProgressKind.TOOL_COMPLETE,
                                     tool_name=tool_call.name,
-                                    detail=(f"[subagent] {tool_call.name}: {status}"),
+                                    detail=f"[subagent] {tool_call.name}: {status}",
                                     iteration=iteration,
                                 )
                             )
@@ -457,9 +419,7 @@ class SubagentManager:
 
                 try:
                     await self._registry.update_agent_state(
-                        agent_id,
-                        AgentState.COMPLETED,
-                        reason="task finished",
+                        agent_id, AgentState.COMPLETED, reason="task finished"
                     )
                 except Exception:
                     pass
@@ -467,27 +427,19 @@ class SubagentManager:
             logger.info(f"Subagent [{task_id}] completed successfully")
             return final_result
 
-        except Exception:
-            # Update registry state on failure
+        except Exception as e:
             if self._registry and registry_task_id:
-                from nanobot.registry.store import (
-                    AgentState,
-                    TaskState,
-                )
+                from nanobot.registry.store import AgentState, TaskState
 
                 try:
                     await self._registry.update_agent_state(
-                        agent_id,
-                        AgentState.FAILED,
-                        reason="subagent error",
+                        agent_id, AgentState.FAILED, reason=str(e)
                     )
                 except Exception:
                     pass
                 try:
                     await self._registry.update_task_state(
-                        registry_task_id,
-                        TaskState.FAILED,
-                        reason="subagent error",
+                        registry_task_id, TaskState.FAILED, reason=str(e)
                     )
                 except Exception:
                     pass
@@ -501,24 +453,14 @@ class SubagentManager:
                 except asyncio.CancelledError:
                     pass
 
-            # Transition agent back to IDLE for reuse
             if self._registry:
                 try:
-                    agent = await self._registry.get_agent(
-                        agent_id,
-                    )
-                    if agent and agent["state"] in (
-                        "completed",
-                        "failed",
-                    ):
-                        from nanobot.registry.store import (
-                            AgentState,
-                        )
+                    agent = await self._registry.get_agent(agent_id)
+                    if agent and agent["state"] in ("completed", "failed"):
+                        from nanobot.registry.store import AgentState
 
                         await self._registry.update_agent_state(
-                            agent_id,
-                            AgentState.IDLE,
-                            reason="cleanup",
+                            agent_id, AgentState.IDLE, reason="cleanup"
                         )
                 except Exception:
                     pass

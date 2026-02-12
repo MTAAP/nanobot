@@ -674,7 +674,6 @@ class AgentLoop:
             logger.warning(f"Tool validation failed: {tool_call.name} - {errors}")
             return f"Error: invalid arguments for {tool_call.name} - {'; '.join(errors)}"
 
-        # Guardrail check before execution
         rule = self._guardrails.check(
             tool_call.name,
             tool_call.arguments,
@@ -1156,15 +1155,10 @@ class AgentLoop:
                 # when single or when guardrails require approval.
                 use_parallel = len(response.tool_calls) > 1
                 if use_parallel:
-                    # Pre-check guardrails; if any need approval, fall
-                    # back to sequential so the human can review each.
                     for tc in response.tool_calls:
                         tool = self.tools.get(tc.name)
-                        if tool and not tool.validate_params(tc.arguments):
-                            rule = self._guardrails.check(
-                                tc.name,
-                                tc.arguments,
-                            )
+                        if tool and tool.validate_params(tc.arguments) == []:
+                            rule = self._guardrails.check(tc.name, tc.arguments)
                             if rule:
                                 use_parallel = False
                                 break

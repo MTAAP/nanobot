@@ -41,9 +41,8 @@ class SpawnTool(Tool):
     def description(self) -> str:
         return (
             "Spawn a subagent to handle a task in the background. "
-            "Use this for complex or time-consuming tasks that can "
-            "run independently. The subagent will complete the task "
-            "and report back when done."
+            "Use this for complex or time-consuming tasks that can run independently. "
+            "The subagent will complete the task and report back when done."
         )
 
     @property
@@ -53,25 +52,21 @@ class SpawnTool(Tool):
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": ("The task for the subagent to complete"),
+                    "description": "The task for the subagent to complete",
                 },
                 "label": {
                     "type": "string",
-                    "description": ("Optional short label for the task (for display)"),
+                    "description": "Optional short label for the task (for display)",
                 },
             },
             "required": ["task"],
         }
 
-    async def execute(
-        self,
-        task: str,
-        label: str | None = None,
-        **kwargs: Any,
-    ) -> str:
+    async def execute(self, task: str, label: str | None = None, **kwargs: Any) -> str:
         """Spawn a subagent to execute the given task."""
         registry_task_id: str | None = None
 
+        # If registry is enabled, create a task before spawning
         # If registry is enabled, create a task before spawning
         if self._registry:
             try:
@@ -95,12 +90,7 @@ class SpawnTool(Tool):
 
 
 class SpawnBatchTool(Tool):
-    """Spawn multiple subagents in parallel and collect results.
-
-    Use this for batch operations like checking multiple PRs,
-    researching multiple topics, or processing multiple items
-    concurrently. All results are collected and returned together.
-    """
+    """Spawn multiple subagents in parallel and collect results."""
 
     def __init__(self, manager: "SubagentManager"):
         self._manager = manager
@@ -132,17 +122,17 @@ class SpawnBatchTool(Tool):
             "properties": {
                 "tasks": {
                     "type": "array",
-                    "description": ("List of tasks to execute in parallel"),
+                    "description": "List of tasks to execute in parallel",
                     "items": {
                         "type": "object",
                         "properties": {
                             "task": {
                                 "type": "string",
-                                "description": ("The task description"),
+                                "description": "The task description",
                             },
                             "label": {
                                 "type": "string",
-                                "description": ("Short label for display"),
+                                "description": "Short label for display",
                             },
                         },
                         "required": ["task"],
@@ -154,11 +144,7 @@ class SpawnBatchTool(Tool):
             "required": ["tasks"],
         }
 
-    async def execute(
-        self,
-        tasks: list[dict[str, str]],
-        **kwargs: Any,
-    ) -> str:
+    async def execute(self, tasks: list[dict[str, str]], **kwargs: Any) -> str:
         """Execute batch spawn and return combined results."""
         try:
             return await self._manager.spawn_batch(
