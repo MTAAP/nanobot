@@ -23,6 +23,20 @@ If this file has no tasks (only headers and comments), the agent will skip proce
 - [ ] **High Priority**: Integrate ErrorLogger into nanobot agent loop (nanobot/agent/loop.py)
 - [ ] **High Priority**: Register HealthCheckTool in agent loop (in _register_default_tools method)
 - [ ] **High Priority**: Add OpenSpec workflows to nanobot repo (.github/workflows/openspec-interview-pr.yml and openspec-proposal-from-pr.yml)
+
+### WedPilot Queue Monitoring (Auto-Fix)
+
+- [ ] **Every Check**: Diagnose OpenSpec implementation queue health
+  - Check for PRs stuck in `ready-for-implementation` state >2 hours
+  - Check for workflows that skipped due to missing specs
+  - Check for runners that are offline or stuck
+  - Verify queue processor is running on strato VPS
+- [ ] **Auto-Fix Actions**:
+  - If PR missing spec files: Copy from develop branch and re-trigger
+  - If workflow skipped: Re-trigger with correct parameters
+  - If runner stuck: Alert user (cannot fix automatically)
+  - If queue processor down: Attempt restart via SSH
+- [ ] **Success Criteria**: All queued PRs should have active workflow runs or be processing on strato
 - [ ] **Medium Priority**: Add execution tracing to capture full agent decision flows (not just errors)
 - [ ] **Medium Priority**: Add decision logging to capture LLM choices before tool execution
 - [ ] **Medium Priority**: Add token/latency metrics per tool call
